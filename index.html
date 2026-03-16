@@ -321,7 +321,7 @@ body::before {
 <div class="toast" id="toast"></div>
 
 <script>
-const ANTHROPIC_API_KEY = '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';
+// API calls routed through Vercel proxy at /api/proxy
 
 let searchHistory = [];
 let currentQuery = '';
@@ -378,11 +378,6 @@ function showLoading(query) {
 async function runSearch() {
   const query = document.getElementById('main-search').value.trim();
   if (!query) { showToast('Enter a search query'); return; }
-  if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === 'YOUR_ANTHROPIC_API_KEY_HERE') {
-    showToast('Add your Anthropic API key to the file first');
-    return;
-  }
-
   currentQuery = query;
   document.getElementById('landing').style.display = 'none';
   const btn = document.getElementById('search-btn');
@@ -423,14 +418,9 @@ When given a search query, return a JSON object with this exact structure:
 Use real, accurate financial data and knowledge. For stocks, include real metrics. For themes, adapt the structure to fit. Always return valid JSON only, no markdown, no preamble.`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-allow-browser': 'true'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 2000,
@@ -595,14 +585,9 @@ async function askFollowUp() {
   resultEl.style.color = 'var(--muted)';
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-allow-browser': 'true'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 600,
