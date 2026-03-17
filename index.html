@@ -513,7 +513,11 @@ async function runSearch() {
   const liveData = await fetchMarketData(query);
   const liveDataStr = formatMarketDataForPrompt(liveData);
 
-  const systemPrompt = `You are DJAI, an elite financial intelligence engine — Bloomberg Terminal meets elite sell-side analyst. You have access to deep market knowledge and provide institutional-grade analysis.
+  const systemPrompt = `You are DJAI, an elite financial intelligence engine — Bloomberg Terminal meets elite sell-side analyst.
+
+CRITICAL RULE: If the user message contains a section labeled "LIVE MARKET DATA", you MUST use those exact figures for ALL price, market cap, P/E, revenue, and financial metrics in your JSON response. Do not substitute, round, or replace any live data figure with your own training knowledge. The live data is always more accurate than your training data.
+
+${liveDataStr ? 'Live market data has been provided for this query. Use it exactly as given.' : 'No live market data available — use your best knowledge.'}
 
 When given a search query, return a JSON object with this exact structure:
 {
@@ -553,7 +557,7 @@ Use real, accurate financial data and knowledge. For stocks, include real metric
         model: 'claude-sonnet-4-5',
         max_tokens: 2000,
         messages: [
-          { role: 'user', content: `Search query: "${query}"\n\nToday is ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}.\n\n${liveDataStr ? liveDataStr + '\n\nIMPORTANT: Use the live market data above for all price, financial, and valuation metrics. Do not substitute your own training data for any figure that is provided above.' : 'Use the most current data available to you.'}\n\nReturn the JSON analysis object as specified.` }
+          { role: 'user', content: `Search query: "${query}"\nToday: ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}\n\n${liveDataStr || 'No live data available.'}\n\nReturn the JSON analysis object.` }
         ],
         system: systemPrompt
       })
