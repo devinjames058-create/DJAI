@@ -224,6 +224,81 @@ body::before {
 /* TOAST */
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface3); border: 1px solid var(--border2); border-radius: 8px; padding: 9px 18px; font-size: 12px; color: var(--text); z-index: 999; opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap; }
 .toast.show { opacity: 1; }
+
+/* VALUATION PANEL */
+.val-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:500; }
+.val-overlay.open { display:block; }
+.val-panel {
+  position:fixed; top:0; right:-780px; width:760px; height:100vh;
+  background:var(--surface); border-left:1px solid var(--border2);
+  display:flex; flex-direction:column; z-index:501;
+  transition:right .3s cubic-bezier(.4,0,.2,1); overflow:hidden;
+  will-change:right;
+}
+.val-panel.open { right:0; }
+.val-topbar {
+  display:flex; align-items:center; gap:12px; padding:14px 20px;
+  border-bottom:1px solid var(--border); flex-shrink:0;
+  background:var(--surface2);
+}
+.val-title { font-family:'Playfair Display',serif; font-size:16px; color:var(--gold); font-weight:500; flex:1; }
+.val-ticker { font-family:'DM Mono',monospace; font-size:10px; color:var(--muted); letter-spacing:0.12em; }
+.val-close { background:none; border:none; color:var(--muted); font-size:20px; cursor:pointer; padding:0 4px; }
+.val-close:hover { color:var(--text); }
+.val-tabs { display:flex; gap:0; border-bottom:1px solid var(--border); flex-shrink:0; background:var(--surface); }
+.val-tab {
+  padding:10px 18px; font-size:11px; font-family:'DM Mono',monospace;
+  letter-spacing:0.08em; text-transform:uppercase; color:var(--muted);
+  cursor:pointer; border-bottom:2px solid transparent; transition:all .15s;
+}
+.val-tab.active { color:var(--gold); border-bottom-color:var(--gold); }
+.val-tab:hover { color:var(--muted2); }
+.val-body { flex:1; overflow-y:auto; padding:20px; }
+.val-loading { display:flex; flex-direction:column; align-items:center; justify-content:center; height:300px; gap:14px; }
+.val-section { margin-bottom:24px; }
+.val-section-title { font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.14em; color:var(--muted); margin-bottom:12px; }
+
+/* GAUGES */
+.gauges-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }
+.gauge-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:16px; text-align:center; }
+.gauge-label { font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.12em; color:var(--muted); margin-bottom:12px; }
+.gauge-wrap { position:relative; width:140px; height:76px; margin:0 auto 10px; }
+.gauge-svg { width:140px; height:76px; }
+.gauge-reading { font-family:'Playfair Display',serif; font-size:16px; font-weight:500; color:var(--text); }
+.gauge-rationale { font-size:11px; color:var(--muted2); line-height:1.55; margin-top:8px; text-align:left; }
+
+/* DCF TABLE */
+.dcf-table { width:100%; border-collapse:collapse; font-size:11px; }
+.dcf-table th { font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.07em; color:var(--muted); padding:6px 8px; border-bottom:1px solid var(--border); text-align:right; }
+.dcf-table th:first-child { text-align:left; }
+.dcf-table td { padding:5px 8px; border-bottom:1px solid var(--border); color:var(--muted2); text-align:right; font-family:'DM Mono',monospace; font-size:11px; }
+.dcf-table td:first-child { color:var(--text); font-family:'DM Sans',sans-serif; text-align:left; font-size:11px; }
+.dcf-table tr.section-header td { background:var(--surface3); color:var(--gold); font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.08em; padding:4px 8px; }
+.dcf-table tr.highlight td { background:rgba(201,168,76,0.06); color:var(--gold2); }
+.dcf-table tr.total td { color:var(--text); font-weight:500; border-top:1px solid var(--border2); }
+.dcf-input { background:var(--surface3); border:1px solid var(--border2); border-radius:3px; color:var(--gold2); font-family:'DM Mono',monospace; font-size:11px; width:72px; padding:2px 6px; text-align:right; outline:none; }
+.dcf-input:focus { border-color:var(--gold); }
+.recalc-btn { background:var(--gold); border:none; border-radius:6px; padding:7px 16px; color:#0a0a0b; font-size:11px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif; margin-top:12px; }
+.recalc-btn:hover { background:var(--gold2); }
+.dcf-result-row { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:16px; }
+.dcf-result { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; }
+.dcf-result-val { font-family:'Playfair Display',serif; font-size:18px; color:var(--gold2); font-weight:500; }
+.dcf-result-label { font-family:'DM Mono',monospace; font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; margin-top:4px; }
+
+/* WRITE-UP */
+.writeup-section { margin-bottom:16px; }
+.writeup-section h4 { font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.12em; color:var(--gold); margin-bottom:6px; }
+.writeup-section p { font-size:12px; color:var(--muted2); line-height:1.75; }
+
+/* VAL BUTTON in results */
+.val-trigger-btn {
+  background:none; border:1px solid var(--gold); border-radius:6px;
+  padding:6px 14px; color:var(--gold); font-size:11px; cursor:pointer;
+  font-family:'DM Mono',monospace; letter-spacing:0.06em; transition:all .15s;
+  margin-left:auto;
+}
+.val-trigger-btn:hover { background:var(--gold3); }
+
 </style>
 </head>
 <body>
@@ -508,6 +583,7 @@ function renderResults(query, r) {
       <div class="results-header">
         <div class="results-query">${r.title || query}</div>
         <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}</div>
+        <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/'/g,"\\'")}')">◈ Run Valuation</button>
       </div>
 
       ${metricsHTML ? `
@@ -617,6 +693,422 @@ async function askFollowUp() {
 document.getElementById('ask-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askFollowUp(); }
 });
+
+// ─── VALUATION PANEL ─────────────────────────────────────────────
+let valData = null;
+let activeValTab = 'gauges';
+
+function openValPanel(title) {
+  document.getElementById('val-panel-title').textContent = title;
+  document.getElementById('val-panel-ticker').textContent = currentQuery.toUpperCase();
+  document.getElementById('val-overlay').classList.add('open');
+  document.getElementById('val-panel').classList.add('open');
+  document.getElementById('val-body').innerHTML = `
+    <div class="val-loading">
+      <div class="loading-bar" style="width:200px"><div class="loading-fill"></div></div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.1em">Building valuation model...</div>
+    </div>`;
+  if (!valData || valData.query !== currentQuery) {
+    fetchValuation(title);
+  } else {
+    renderValTab(activeValTab);
+  }
+}
+
+function closeValPanel() {
+  document.getElementById('val-overlay').classList.remove('open');
+  document.getElementById('val-panel').classList.remove('open');
+}
+
+function switchValTab(tab, el) {
+  activeValTab = tab;
+  document.querySelectorAll('.val-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  if (valData && valData.query === currentQuery) renderValTab(tab);
+}
+
+async function fetchValuation(title) {
+  const prompt = `You are an elite equity research analyst. Generate a complete valuation model for: "${title}" (search context: ${currentQuery}).
+
+Return ONLY a JSON object with this exact structure:
+{
+  "query": "${currentQuery}",
+  "ticker": "TICKER",
+  "company": "Full Company Name",
+  "currentPrice": 000.00,
+  "ratings": {
+    "signal": "BUY|HOLD|SELL",
+    "signalScore": 0-10,
+    "signalRationale": "2-3 sentence rationale for buy/hold/sell",
+    "valuation": "UNDERVALUED|FAIRLY VALUED|OVERVALUED",
+    "valuationScore": 0-10,
+    "valuationRationale": "2-3 sentence rationale for valuation status",
+    "upside": "+X.X%"
+  },
+  "dcf": {
+    "wacc": 0.00,
+    "terminalGrowth": 0.00,
+    "years": 5,
+    "revenueBase": 000.0,
+    "projections": [
+      {"year": "2024", "revenue": 000.0, "revenueGrowth": 0.00, "ebitdaMargin": 0.00, "ebitda": 000.0, "fcf": 000.0, "discountFactor": 0.000, "pvFcf": 000.0}
+    ],
+    "terminalValue": 00000.0,
+    "pvTerminalValue": 00000.0,
+    "totalPV": 00000.0,
+    "netDebt": 0000.0,
+    "sharesOutstanding": 000.0,
+    "impliedPrice": 000.00,
+    "currentPrice": 000.00,
+    "upsideDownside": "+X.X%"
+  },
+  "comps": {
+    "headers": ["Company", "EV/EBITDA", "P/E", "P/S", "EV/Revenue", "Premium/Discount"],
+    "rows": [
+      {"name": "Company Name", "evEbitda": "00.0x", "pe": "00.0x", "ps": "0.0x", "evRevenue": "0.0x", "premDisc": "+X.X%", "isTarget": false}
+    ],
+    "sectorMedianEvEbitda": "00.0x",
+    "sectorMedianPe": "00.0x"
+  },
+  "writeup": {
+    "businessDescription": "3-4 sentences on what the company does, its market position, key segments, and competitive moat.",
+    "financialPerformance": "3-4 sentences on recent financial performance — revenue trends, margin profile, FCF generation, balance sheet strength.",
+    "catalysts": "3-4 sentences on near and medium term catalysts — product launches, market expansion, macro tailwinds, strategic initiatives.",
+    "risks": "2-3 sentences on key risks — competitive threats, macro sensitivity, execution risk.",
+    "outlook": "2-3 sentences with forward looking view, price target rationale, and investment conclusion."
+  }
+}
+
+Use real financial data. Be specific with numbers. Return ONLY valid JSON, no markdown.`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+  try {
+    const res = await fetch('https://djai.vercel.app/api/proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 3000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    clearTimeout(timeout);
+    const data = await res.json();
+    let rawText = '';
+    for (const block of (data.content || [])) {
+      if (block.type === 'text') rawText += block.text;
+    }
+    const cleaned = rawText.replace(/```json/g,'').replace(/```/g,'').trim();
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    valData = JSON.parse(cleaned.slice(start, end+1));
+    valData.query = currentQuery;
+    // Only render if user is still on same search
+    if (valData.query === currentQuery) renderValTab(activeValTab);
+  } catch(e) {
+    clearTimeout(timeout);
+    const msg = e.name === 'AbortError' ? 'Request timed out — try again' : e.message;
+    document.getElementById('val-body').innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted2)">Error loading valuation: ${msg}</div>`;
+  }
+}
+
+function renderValTab(tab) {
+  if (!valData) return;
+  const body = document.getElementById('val-body');
+  if (tab === 'gauges') body.innerHTML = renderGauges();
+  else if (tab === 'dcf') body.innerHTML = renderDCF();
+  else if (tab === 'comps') body.innerHTML = renderComps();
+  else if (tab === 'writeup') body.innerHTML = renderWriteUp();
+  if (tab === 'gauges') requestAnimationFrame(() => drawGauges());
+  if (tab === 'dcf') setupDCFInputs();
+}
+
+function renderGauges() {
+  const r = valData.ratings;
+  const signalColor = r.signal === 'BUY' ? 'var(--green)' : r.signal === 'SELL' ? 'var(--red)' : 'var(--amber)';
+  const valColor = r.valuation === 'UNDERVALUED' ? 'var(--green)' : r.valuation === 'OVERVALUED' ? 'var(--red)' : 'var(--amber)';
+  return `
+    <div class="gauges-row">
+      <div class="gauge-card">
+        <div class="gauge-label">Signal</div>
+        <div class="gauge-wrap">
+          <canvas id="gauge-signal" width="140" height="76"></canvas>
+        </div>
+        <div class="gauge-reading" style="color:${signalColor}">${r.signal}</div>
+        <div class="gauge-rationale">${r.signalRationale}</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-label">Valuation</div>
+        <div class="gauge-wrap">
+          <canvas id="gauge-val" width="140" height="76"></canvas>
+        </div>
+        <div class="gauge-reading" style="color:${valColor}">${r.valuation}</div>
+        <div class="gauge-rationale">${r.valuationRationale}</div>
+      </div>
+    </div>
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+      <div class="val-section-title">Price Target & Upside</div>
+      <div style="display:flex;gap:24px;align-items:baseline">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--gold2)">${r.upside}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">Implied Upside</div>
+        </div>
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--text)">$${valData.dcf?.impliedPrice?.toFixed(2) || '—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">Fair Value Est.</div>
+        </div>
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--muted2)">$${valData.currentPrice?.toFixed(2) || '—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">Current Price</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function drawGauges() {
+  const r = valData.ratings;
+  const signalScore = Math.min(1, Math.max(0, Number(r.signalScore) / 10));
+  const valScore = Math.min(1, Math.max(0, Number(r.valuationScore) / 10));
+  drawNeedle('gauge-signal', signalScore, r.signal === 'BUY' ? '#4caf7d' : r.signal === 'SELL' ? '#e05c5c' : '#e09b3c');
+  drawNeedle('gauge-val', valScore, r.valuation === 'UNDERVALUED' ? '#4caf7d' : r.valuation === 'OVERVALUED' ? '#e05c5c' : '#e09b3c');
+}
+
+function drawNeedle(canvasId, score, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const cx = 70, cy = 70, r = 56;
+  ctx.clearRect(0, 0, 140, 76);
+
+  // Arc segments: red(0-0.33) amber(0.33-0.66) green(0.66-1)
+  const segments = [
+    {from: Math.PI, to: Math.PI*1.33, color:'#e05c5c'},
+    {from: Math.PI*1.33, to: Math.PI*1.66, color:'#e09b3c'},
+    {from: Math.PI*1.66, to: Math.PI*2, color:'#4caf7d'}
+  ];
+  segments.forEach(s => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, s.from, s.to);
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 10;
+    ctx.globalAlpha = 0.25;
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
+  // Active arc
+  const startAngle = Math.PI;
+  const endAngle = Math.PI + (score * Math.PI);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, startAngle, endAngle);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 10;
+  ctx.stroke();
+
+  // Needle
+  const needleAngle = Math.PI + (score * Math.PI);
+  const nx = cx + (r - 16) * Math.cos(needleAngle);
+  const ny = cy + (r - 16) * Math.sin(needleAngle);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(nx, ny);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4, 0, Math.PI*2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function renderDCF() {
+  const d = valData.dcf;
+  if (!d) return '<div style="padding:24px;color:var(--muted2);font-size:12px">No DCF data available.</div>';
+  const projHTML = (d.projections || []).map(p => `
+    <tr>
+      <td>${p.year}</td>
+      <td>$${Number(p.revenue).toFixed(1)}B</td>
+      <td><input class="dcf-input" data-field="rev-${p.year}" value="${(Number(p.revenueGrowth)*100).toFixed(1)}" onchange="recalcDCF()">%</td>
+      <td><input class="dcf-input" data-field="margin-${p.year}" value="${(Number(p.ebitdaMargin)*100).toFixed(1)}" onchange="recalcDCF()">%</td>
+      <td>$${Number(p.ebitda).toFixed(1)}B</td>
+      <td>$${Number(p.fcf).toFixed(1)}B</td>
+      <td>${Number(p.discountFactor).toFixed(3)}</td>
+      <td>$${Number(p.pvFcf).toFixed(1)}B</td>
+    </tr>`).join('');
+
+  return `
+    <div class="val-section">
+      <div class="val-section-title">Key Assumptions</div>
+      <div style="display:flex;gap:16px;margin-bottom:14px;flex-wrap:wrap">
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">WACC</div>
+          <input class="dcf-input" id="wacc-input" value="${(Number(d.wacc)*100).toFixed(1)}" onchange="recalcDCF()" style="width:60px">%
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Terminal Growth</div>
+          <input class="dcf-input" id="tgr-input" value="${(Number(d.terminalGrowth)*100).toFixed(1)}" onchange="recalcDCF()" style="width:60px">%
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Shares Out (B)</div>
+          <input class="dcf-input" id="shares-input" value="${Number(d.sharesOutstanding).toFixed(2)}" onchange="recalcDCF()" style="width:60px">
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Net Debt ($B)</div>
+          <input class="dcf-input" id="debt-input" value="${Number(d.netDebt).toFixed(1)}" onchange="recalcDCF()" style="width:60px">
+        </div>
+      </div>
+    </div>
+    <div class="val-section">
+      <div class="val-section-title">Projected Cash Flows</div>
+      <table class="dcf-table">
+        <thead><tr>
+          <th style="text-align:left">Year</th><th>Revenue</th><th>Rev Growth</th>
+          <th>EBITDA Margin</th><th>EBITDA</th><th>FCF</th><th>Disc. Factor</th><th>PV FCF</th>
+        </tr></thead>
+        <tbody id="dcf-proj-body">${projHTML}</tbody>
+      </table>
+    </div>
+    <div class="dcf-result-row" id="dcf-results">
+      <div class="dcf-result">
+        <div class="dcf-result-val" id="dcf-impl-price">$${Number(d.impliedPrice).toFixed(2)}</div>
+        <div class="dcf-result-label">Implied Price</div>
+      </div>
+      <div class="dcf-result">
+        <div class="dcf-result-val" style="color:var(--muted2)">$${Number(d.currentPrice).toFixed(2)}</div>
+        <div class="dcf-result-label">Current Price</div>
+      </div>
+      <div class="dcf-result">
+        <div class="dcf-result-val" id="dcf-upside" style="color:${d.upsideDownside && d.upsideDownside.startsWith('+') ? 'var(--green)' : 'var(--red)'}">${d.upsideDownside}</div>
+        <div class="dcf-result-label">Upside / Downside</div>
+      </div>
+    </div>`;
+}
+
+
+let _dcfDebounce = null;
+function recalcDCF() {
+  clearTimeout(_dcfDebounce);
+  _dcfDebounce = setTimeout(_doRecalcDCF, 300);
+}
+function _doRecalcDCF() {
+  if (!valData || !valData.dcf) return;
+  const d = valData.dcf;
+  const wacc = parseFloat(document.getElementById('wacc-input')?.value || d.wacc * 100) / 100;
+  const tgr = parseFloat(document.getElementById('tgr-input')?.value || d.terminalGrowth * 100) / 100;
+  const shares = parseFloat(document.getElementById('shares-input')?.value || d.sharesOutstanding);
+  const netDebt = parseFloat(document.getElementById('debt-input')?.value || d.netDebt);
+
+  let totalPVFCF = 0;
+  const projs = d.projections || [];
+  projs.forEach((p, i) => {
+    const df = 1 / Math.pow(1 + wacc, i + 1);
+    const pvFcf = Number(p.fcf) * df;
+    totalPVFCF += pvFcf;
+  });
+
+  const lastFCF = projs.length ? Number(projs[projs.length - 1].fcf) : 0;
+  const termVal = wacc !== tgr ? (lastFCF * (1 + tgr)) / (wacc - tgr) : (lastFCF * 20);
+  const pvTermVal = termVal / Math.pow(1 + wacc, projs.length);
+  const totalPV = totalPVFCF + pvTermVal;
+  const equityVal = totalPV - netDebt;
+  const impliedPrice = equityVal / shares;
+  const upside = ((impliedPrice - d.currentPrice) / d.currentPrice * 100).toFixed(1);
+  const upsideNum = parseFloat(upside);
+  const upsideStr = (upsideNum > 0 ? '+' : '') + upside + '%';
+
+  const implEl = document.getElementById('dcf-impl-price');
+  const upEl = document.getElementById('dcf-upside');
+  if (implEl) implEl.textContent = '$' + impliedPrice.toFixed(2);
+  if (upEl) {
+    upEl.textContent = upsideStr;
+    upEl.style.color = upsideNum > 0 ? 'var(--green)' : 'var(--red)';
+  }
+}
+
+function renderComps() {
+  const c = valData.comps;
+  if (!c) return '<div style="padding:24px;color:var(--muted2);font-size:12px">No comps data available.</div>';
+  const rowsHTML = (c.rows || []).map(r => `
+    <tr style="${r.isTarget ? 'background:rgba(201,168,76,0.06)' : ''}">
+      <td style="${r.isTarget ? 'color:var(--gold)' : ''}">${r.name}${r.isTarget ? ' ◈' : ''}</td>
+      <td>${r.evEbitda}</td><td>${r.pe}</td><td>${r.ps}</td><td>${r.evRevenue}</td>
+      <td style="color:${r.premDisc && r.premDisc.startsWith('+') ? 'var(--green)' : 'var(--red)'}">${r.premDisc}</td>
+    </tr>`).join('');
+
+  return `
+    <div class="val-section">
+      <div class="val-section-title">Trading Comps</div>
+      <table class="dcf-table">
+        <thead><tr>${(c.headers||[]).map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${rowsHTML}</tbody>
+        <tfoot>
+          <tr class="total">
+            <td>Sector Median</td>
+            <td>${c.sectorMedianEvEbitda}</td>
+            <td>${c.sectorMedianPe}</td>
+            <td>—</td><td>—</td><td>—</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>`;
+}
+
+function renderWriteUp() {
+  const w = valData.writeup;
+  if (!w) return '<div style="padding:24px;color:var(--muted2);font-size:12px">No write-up available.</div>';
+  const sections = [
+    {title: 'Business Description', content: w.businessDescription},
+    {title: 'Financial Performance', content: w.financialPerformance},
+    {title: 'Key Catalysts', content: w.catalysts},
+    {title: 'Risk Factors', content: w.risks},
+    {title: 'Investment Outlook', content: w.outlook}
+  ];
+  return `
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--text)">${valData.company || valData.query}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+      </div>
+      ${sections.map(s => `
+        <div class="writeup-section">
+          <h4>${s.title}</h4>
+          <p>${s.content || '—'}</p>
+        </div>`).join('')}
+    </div>`;
+}
+
+// ESC to close val panel
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeValPanel();
+});
+
 </script>
+
+<!-- VALUATION PANEL -->
+<div class="val-overlay" id="val-overlay" onclick="closeValPanel()"></div>
+<div class="val-panel" id="val-panel" onclick="event.stopPropagation()">
+  <div class="val-topbar">
+    <div>
+      <div class="val-title" id="val-panel-title">Valuation Model</div>
+      <div class="val-ticker" id="val-panel-ticker"></div>
+    </div>
+    <button class="val-close" onclick="closeValPanel()">×</button>
+  </div>
+  <div class="val-tabs">
+    <div class="val-tab active" onclick="switchValTab('gauges',this)">Ratings</div>
+    <div class="val-tab" onclick="switchValTab('dcf',this)">DCF Model</div>
+    <div class="val-tab" onclick="switchValTab('comps',this)">Comps</div>
+    <div class="val-tab" onclick="switchValTab('writeup',this)">Write-Up</div>
+  </div>
+  <div class="val-body" id="val-body">
+    <div class="val-loading">
+      <div class="loading-bar" style="width:200px"><div class="loading-fill"></div></div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.1em">Building valuation model...</div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
