@@ -399,6 +399,53 @@ body::before {
 <script>
 // API calls routed through Vercel proxy at /api/proxy
 
+// ─── LIVE MARKET DATA ────────────────────────────────────────────
+async function fetchMarketData(query) {
+  // Only fetch market data for likely ticker/company searches
+  const tickerPattern = /^[A-Z]{1,5}$/.test(query.trim().toUpperCase());
+  const ticker = tickerPattern ? query.trim().toUpperCase() : query.trim().toUpperCase().split(' ')[0];
+  try {
+    const res = await fetch('https://djai.vercel.app/api/market', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker })
+    });
+    const json = await res.json();
+    if (json.success && json.data && json.data.price) return json.data;
+  } catch(e) {}
+  return null;
+}
+
+function formatMarketDataForPrompt(md) {
+  if (!md) return '';
+  return `LIVE MARKET DATA (use these exact figures — do not substitute your own):
+Company: ${md.companyName}
+Current Price: $${md.price} ${md.currency}
+Price Change: ${md.priceChangePct}
+Market Cap: ${md.marketCap}
+P/E Ratio (TTM): ${md.pe}
+Forward P/E: ${md.forwardPE}
+EPS (TTM): ${md.eps}
+52-Week High: ${md.week52High}
+52-Week Low: ${md.week52Low}
+Revenue: ${md.revenue}
+Gross Margin: ${md.grossMargin}
+Operating Margin: ${md.operatingMargin}
+Profit Margin: ${md.profitMargin}
+Free Cash Flow: ${md.freeCashflow}
+Total Cash: ${md.totalCash}
+Total Debt: ${md.totalDebt}
+Return on Equity: ${md.returnOnEquity}
+Revenue Growth (YoY): ${md.revenueGrowth}
+Earnings Growth: ${md.earningsGrowth}
+Analyst Target Price: ${md.targetMeanPrice}
+Analyst Consensus: ${md.recommendationKey}
+Number of Analysts: ${md.numberOfAnalystOpinions}
+Beta: ${md.beta}
+Dividend Yield: ${md.dividendYield}
+Data as of: ${md.dataTimestamp}`;
+}
+
 let searchHistory = [];
 let currentQuery = '';
 let lastResultContext = '';
@@ -462,6 +509,10 @@ async function runSearch() {
   showLoading(query);
   addToHistory(query);
 
+  // Fetch live market data first
+  const liveData = await fetchMarketData(query);
+  const liveDataStr = formatMarketDataForPrompt(liveData);
+
   const systemPrompt = `You are DJAI, an elite financial intelligence engine — Bloomberg Terminal meets elite sell-side analyst. You have access to deep market knowledge and provide institutional-grade analysis.
 
 When given a search query, return a JSON object with this exact structure:
@@ -502,7 +553,7 @@ Use real, accurate financial data and knowledge. For stocks, include real metric
         model: 'claude-sonnet-4-5',
         max_tokens: 2000,
         messages: [
-          { role: 'user', content: `Search query: "${query}"\n\nToday is ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}. IMPORTANT: Use the most current data you have. For stock prices, market caps, and financial metrics, clearly note if the data may be from your training cutoff and use approximate current figures based on latest trends you know. Return the JSON analysis object as specified.` }
+          { role: 'user', content: `Search query: "${query}"\n\nToday is ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}.\n\n${liveDataStr ? liveDataStr + '\n\nIMPORTANT: Use the live market data above for all price, financial, and valuation metrics. Do not substitute your own training data for any figure that is provided above.' : 'Use the most current data available to you.'}\n\nReturn the JSON analysis object as specified.` }
         ],
         system: systemPrompt
       })
@@ -750,7 +801,13 @@ function switchValTab(tab, el) {
 }
 
 async function fetchValuation(title) {
+  // Fetch fresh live data for valuation too
+  const liveValData = await fetchMarketData(currentQuery);
+  const liveValStr = formatMarketDataForPrompt(liveValData);
+
   const prompt = `You are an elite equity research analyst. Generate a complete valuation model for: "${title}" (search context: ${currentQuery}).
+
+${liveValStr ? liveValStr + '\n\nIMPORTANT: Use the live market data above as the basis for your DCF, comps, and all financial figures. Current price must match the live data exactly.' : ''}
 
 Return ONLY a JSON object with this exact structure:
 {
