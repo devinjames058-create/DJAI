@@ -22,7 +22,8 @@ module.exports = async function handler(req, res) {
 
   try {
     const [priceRes, statsRes, financialRes] = await Promise.all([
-      fetch(`https://${HOST}/api/stock/stockGetPrice?symbol=${encodeURIComponent(ticker)}`, { headers }),
+      // CORRECT endpoint — get-price not stockGetPrice
+      fetch(`https://${HOST}/api/stock/get-price?region=US&symbol=${encodeURIComponent(ticker)}`, { headers }),
       fetch(`https://${HOST}/api/stock/stockGetStatistics?region=US&symbol=${encodeURIComponent(ticker)}`, { headers }),
       fetch(`https://${HOST}/api/stock/get-financial-data?region=US&symbol=${encodeURIComponent(ticker)}`, { headers })
     ]);
@@ -30,6 +31,10 @@ module.exports = async function handler(req, res) {
     const [priceJson, statsJson, financialJson] = await Promise.all([
       priceRes.json(), statsRes.json(), financialRes.json()
     ]);
+
+    // Log raw response for debugging
+    console.log('price endpoint status:', priceRes.status);
+    console.log('price raw:', JSON.stringify(priceJson).slice(0, 300));
 
     const p = priceJson?.quoteSummary?.result?.[0]?.price || {};
     const s = statsJson?.quoteSummary?.result?.[0]?.summaryDetail || {};
