@@ -259,6 +259,7 @@ body::before {
 
     <!-- CENTER -->
     <div class="center" id="center">
+      <div id="results-container" style="display:none"></div>
       <!-- LANDING -->
       <div class="landing" id="landing">
         <div>
@@ -361,8 +362,9 @@ function renderHistory() {
 }
 
 function showLoading(query) {
-  const center = document.getElementById('center');
-  center.innerHTML = `
+  document.getElementById('landing').style.display = 'none';
+  const resultsDiv = document.getElementById('results-container');
+  resultsDiv.innerHTML = `
     <div class="loading-state">
       <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:8px">Analyzing "${query}"</div>
       <div class="loading-bar"><div class="loading-fill"></div></div>
@@ -373,13 +375,13 @@ function showLoading(query) {
         <div class="loading-step"><span class="step-icon">◈</span> Compiling risk assessment</div>
       </div>
     </div>`;
+  resultsDiv.style.display = 'block';
 }
 
 async function runSearch() {
   const query = document.getElementById('main-search').value.trim();
   if (!query) { showToast('Enter a search query'); return; }
   currentQuery = query;
-  document.getElementById('landing').style.display = 'none';
   const btn = document.getElementById('search-btn');
   btn.disabled = true; btn.textContent = 'Searching...';
   showLoading(query);
@@ -439,12 +441,14 @@ Use real, accurate financial data and knowledge. For stocks, include real metric
       if (block.type === 'text') rawText += block.text;
     }
 
-    // Parse JSON — strip markdown fences first, then extract object
+    // Parse JSON — strip markdown fences then find first { to last }
     let result;
     try {
-      const cleaned = rawText.replace(/```json|```/g, '').trim();
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      result = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
+      const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      const jsonStr = start !== -1 && end !== -1 ? cleaned.slice(start, end + 1) : cleaned;
+      result = JSON.parse(jsonStr);
     } catch(e) {
       renderError(query, 'Could not parse AI response. Raw: ' + rawText.slice(0, 200));
       return;
@@ -461,7 +465,7 @@ Use real, accurate financial data and knowledge. For stocks, include real metric
 }
 
 function renderResults(query, r) {
-  const center = document.getElementById('center');
+  const center = document.getElementById('results-container');
 
   const metricsHTML = (r.overview?.metrics || []).map(m => `
     <div class="metric">
@@ -559,7 +563,7 @@ function renderResults(query, r) {
 }
 
 function renderError(query, detail) {
-  const center = document.getElementById('center');
+  const center = document.getElementById('results-container');
   center.innerHTML = `
     <div class="results">
       <div class="results-header">
