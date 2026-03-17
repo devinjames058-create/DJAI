@@ -583,7 +583,16 @@ When given a search query, return a JSON object with this exact structure:
   "context": "A comprehensive 3-4 sentence paragraph with deeper analysis, historical context, and forward-looking insight. This will be used to answer follow-up questions."
 }
 
-Return valid JSON only. No markdown. Keep string values to 1-2 sentences max.`;
+You MUST return ALL of these sections in your JSON — do not skip any:
+- type, title, overview (with description + metrics array)
+- thesis (with bull array, bear array, summary string)
+- news (array of 3-4 items with headline, source, time, sentiment)
+- comps (array of 4-5 rows with name, metric1, metric2, metric3, change, direction)
+- compsHeaders (array of 5 header strings)
+- risks (array of 3-4 items with level and text)
+- context (single paragraph string)
+
+Return valid JSON only. No markdown. No explanation. No truncation.`;
 
   try {
     const res = await fetch('https://djai.vercel.app/api/proxy', {
@@ -728,7 +737,7 @@ function renderResults(query, r) {
         <div class="results-query">${r.title || query}</div>
         <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · <span style="color:var(--green)">Live data</span>' : ' · <span style="color:var(--muted2)">No live data</span>'}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/'/g,&quot;\\'&quot;)}')">◈ Valuation</button>
+          <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/['"]/g,'')}')">◈ Valuation</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--blue);border-color:rgba(91,143,212,0.4)" onclick="openFinancialsPanel()">▤ Financials</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--green);border-color:rgba(76,175,125,0.4)" onclick="openFilingsPanel()">⬡ Filings</button>
         </div>
