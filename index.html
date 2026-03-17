@@ -826,12 +826,22 @@ async function fetchValuation(title) {
   const liveValData = await fetchMarketData(currentQuery);
   const liveValStr = formatMarketDataForPrompt(liveValData);
 
+  // Create compact version of live data for valuation prompts
+  const compactLiveStr = liveValData ? (() => {
+    const q = liveValData.quote || liveValData;
+    const v = liveValData.valuation || {};
+    const f = liveValData.currentFinancials || {};
+    const a = liveValData.analystData || {};
+    const m = liveValData.macro || {};
+    return `KEY DATA: Price $${q.price||liveValData.price}, MktCap ${v.marketCap||liveValData.marketCap}, P/E ${v.pe||liveValData.pe}, FwdPE ${v.forwardPE}, EPS ${v.eps}, Beta ${v.beta}, Revenue ${f.revenue||liveValData.revenue}, GrossMargin ${f.grossMargin}, OpMargin ${f.operatingMargin}, ProfitMargin ${f.profitMargin}, FCF ${f.freeCashflow}, ROE ${f.returnOnEquity}, RevGrowth ${f.revenueGrowth}, EarnGrowth ${f.earningsGrowth}, TotalDebt ${f.totalDebt}, Cash ${f.totalCash}, AnalystTarget ${a.targetMean}, Consensus ${a.recommendation}, WACC_RFR ${m.riskFreeRatePct}`;
+  })() : '';
+
   // SPLIT into two focused prompts to avoid timeout
   // Part 1: Ratings + Write-up (fast)
   const prompt1 = `You are an elite equity research analyst. Analyze: "${title}" (${currentQuery}).
-${liveValStr ? liveValStr : ''}
+${compactLiveStr}
 
-Return ONLY this JSON (no markdown):
+CRITICAL: Your response must be complete valid JSON. Do not truncate. Return ONLY this JSON (no markdown, no explanation):
 {
   "query": "${currentQuery}",
   "ticker": "${currentQuery.toUpperCase()}",
@@ -857,7 +867,7 @@ Return ONLY this JSON (no markdown):
 
   // Part 2: DCF + Comps (runs after part 1)
   const prompt2 = `You are an elite equity research analyst. Build DCF and comps for: "${title}" (${currentQuery}).
-${liveValStr ? liveValStr : ''}
+${compactLiveStr}
 
 Return ONLY this JSON (no markdown):
 {
@@ -937,8 +947,8 @@ Return ONLY this JSON (no markdown):
 
     // Run both calls in parallel for speed
     const [part1, part2] = await Promise.allSettled([
-      callClaude(prompt1, 1200),
-      callClaude(prompt2, 1500)
+      callClaude(prompt1, 2000),
+      callClaude(prompt2, 2500)
     ]);
 
     if (part1.status === 'rejected') throw new Error(part1.reason?.message || 'Ratings failed');
