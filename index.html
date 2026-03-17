@@ -871,27 +871,27 @@ let activeValTab = 'gauges';
 
 function openFinancialsPanel() {
   document.getElementById('fin-panel-sub').textContent = currentQuery.toUpperCase();
-  document.getElementById('fin-overlay').style.display = 'block';
-  document.getElementById('fin-panel').style.right = '0';
+  document.getElementById('fin-overlay').classList.add('open');
+  document.getElementById('fin-panel').classList.add('open');
   document.body.style.overflow = 'hidden';
   loadFinancials('fin-body');
 }
 function closeFinancialsPanel() {
-  document.getElementById('fin-overlay').style.display = 'none';
-  document.getElementById('fin-panel').style.right = '-780px';
+  document.getElementById('fin-overlay').classList.remove('open');
+  document.getElementById('fin-panel').classList.remove('open');
   document.body.style.overflow = '';
 }
 
 function openFilingsPanel() {
   document.getElementById('fil-panel-sub').textContent = currentQuery.toUpperCase();
-  document.getElementById('fil-overlay').style.display = 'block';
-  document.getElementById('fil-panel').style.right = '0';
+  document.getElementById('fil-overlay').classList.add('open');
+  document.getElementById('fil-panel').classList.add('open');
   document.body.style.overflow = 'hidden';
   loadFilings('fil-body');
 }
 function closeFilingsPanel() {
-  document.getElementById('fil-overlay').style.display = 'none';
-  document.getElementById('fil-panel').style.right = '-780px';
+  document.getElementById('fil-overlay').classList.remove('open');
+  document.getElementById('fil-panel').classList.remove('open');
   document.body.style.overflow = '';
 }
 
@@ -1509,11 +1509,11 @@ document.addEventListener('keydown', e => {
 
 <!-- VALUATION PANEL -->
 <div class="val-overlay" id="val-overlay" onclick="closeValPanel()"></div>
-<div class="val-overlay" id="fin-overlay" onclick="closeFinancialsPanel()" style="display:none"></div>
-<div class="val-overlay" id="fil-overlay" onclick="closeFilingsPanel()" style="display:none"></div>
+<div class="val-overlay" id="fin-overlay" onclick="closeFinancialsPanel()"></div>
+<div class="val-overlay" id="fil-overlay" onclick="closeFilingsPanel()"></div>
 
 <!-- FINANCIALS PANEL -->
-<div class="val-panel" id="fin-panel" style="right:-780px">
+<div class="val-panel" id="fin-panel">
   <div class="val-panel-header">
     <div>
       <div class="val-panel-title" id="fin-panel-title">Financial Statements</div>
@@ -1527,7 +1527,7 @@ document.addEventListener('keydown', e => {
 </div>
 
 <!-- FILINGS PANEL -->
-<div class="val-panel" id="fil-panel" style="right:-780px">
+<div class="val-panel" id="fil-panel">
   <div class="val-panel-header">
     <div>
       <div class="val-panel-title" id="fil-panel-title">SEC Filings</div>
