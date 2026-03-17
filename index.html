@@ -1,4 +1,4 @@
-  <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -473,6 +473,13 @@ let searchHistory = [];
 let currentQuery = '';
 let lastResultContext = '';
 let lastLiveDataAvailable = false;
+let _claudeRequestQueue = Promise.resolve(); // Serializes all Claude calls
+
+// Wrap every Claude call through the queue to prevent parallel requests
+function queuedClaudeCall(fn) {
+  _claudeRequestQueue = _claudeRequestQueue.then(() => fn()).catch(() => {});
+  return _claudeRequestQueue;
+}
 
 function showToast(msg) {
   const t = document.getElementById('toast');
@@ -533,7 +540,10 @@ async function runSearch() {
   showLoading(query);
   addToHistory(query);
 
-  // Fetch live market data first
+  // Small delay to prevent request bursts on rapid searches
+  await new Promise(r => setTimeout(r, 300));
+
+  // Fetch live market data first (non-Claude, doesn't count toward RPM)
   const liveData = await fetchMarketData(query);
   lastLiveDataAvailable = !!liveData;
   window._lastLiveData = liveData; // Store globally for renderResults access
@@ -717,7 +727,11 @@ function renderResults(query, r) {
       <div class="results-header">
         <div class="results-query">${r.title || query}</div>
         <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · <span style="color:var(--green)">Live data</span>' : ' · <span style="color:var(--muted2)">No live data</span>'}</div>
-        <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/'/g,"\\'")}')">◈ Run Valuation</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/'/g,&quot;\\'&quot;)}')">◈ Valuation</button>
+          <button class="val-trigger-btn" style="background:var(--surface2);color:var(--blue);border-color:rgba(91,143,212,0.4)" onclick="openFinancialsPanel()">▤ Financials</button>
+          <button class="val-trigger-btn" style="background:var(--surface2);color:var(--green);border-color:rgba(76,175,125,0.4)" onclick="openFilingsPanel()">⬡ Filings</button>
+        </div>
       </div>
 
       ${metricsHTML ? `
@@ -784,6 +798,11 @@ function renderError(query, detail) {
       <div class="results-header">
         <div class="results-query">${query}</div>
         <div class="results-meta" style="color:var(--red)">Error</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="val-trigger-btn" onclick="openValPanel('${query}')">◈ Valuation</button>
+          <button class="val-trigger-btn" style="background:var(--surface2);color:var(--blue);border-color:rgba(91,143,212,0.4)" onclick="openFinancialsPanel()">▤ Financials</button>
+          <button class="val-trigger-btn" style="background:var(--surface2);color:var(--green);border-color:rgba(76,175,125,0.4)" onclick="openFilingsPanel()">⬡ Filings</button>
+        </div>
       </div>
       <div class="card">
         <div class="card-body">
@@ -1161,34 +1180,31 @@ Return ONLY this JSON (no markdown):
         <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.1em">Loading ratings & analysis...</div>
       </div>`;
 
-    // Run both calls in parallel for speed
-    const [part1, part2] = await Promise.allSettled([
-      callClaude(prompt1, 2000),
-      callClaude(prompt2, 2500)
-    ]);
-
-    if (part1.status === 'rejected') throw new Error(part1.reason?.message || 'Ratings failed');
-
-    // Merge results — show ratings immediately, then update with DCF
-    valData = { ...part1.value };
+    // Run sequentially to stay within 50 RPM limit
+    // Part 1: Ratings + Write-up
+    const part1 = await callClaude(prompt1, 2000).catch(e => { throw e; });
+    valData = { ...part1 };
     valData.query = currentQuery;
 
-    // Show ratings immediately
+    // Show ratings immediately while DCF loads
     if (valData.query === currentQuery) renderValTab(activeValTab);
 
-    // Merge DCF/comps when ready and re-render
-    if (part2.status === 'fulfilled' && part2.value) {
-      valData.dcf = part2.value.dcf;
-      valData.comps = part2.value.comps;
+    // Part 2: DCF + Comps (sequential, after part1)
+    try {
+      const part2 = await callClaude(prompt2, 2500);
+      if (part2 && valData.query === currentQuery) {
+        valData.dcf = part2.dcf;
+        valData.comps = part2.comps;
 
-      // ── BUSINESS INTELLIGENCE LAYER ─────────────────────────────
-      // Reconcile logical contradictions between signal, valuation, and upside
-      reconcileValuationLogic(valData);
+        // ── BUSINESS INTELLIGENCE LAYER ──────────────────────────
+        reconcileValuationLogic(valData);
 
-      if (valData.query === currentQuery) {
         if (activeValTab === 'gauges') renderValTab('gauges');
         else if (activeValTab === 'dcf') renderValTab('dcf');
       }
+    } catch(e) {
+      // DCF failed but ratings are already showing — acceptable degradation
+      console.warn('DCF call failed:', e.message);
     }
   } catch(e) {
     const msg = e.name === 'AbortError' ? 'Request timed out — try again' : e.message;
