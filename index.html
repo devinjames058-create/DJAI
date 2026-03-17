@@ -841,6 +841,32 @@ document.getElementById('ask-input').addEventListener('keydown', e => {
 let valData = null;
 let activeValTab = 'gauges';
 
+function openFinancialsPanel() {
+  document.getElementById('fin-panel-sub').textContent = currentQuery.toUpperCase();
+  document.getElementById('fin-overlay').style.display = 'block';
+  document.getElementById('fin-panel').style.right = '0';
+  document.body.style.overflow = 'hidden';
+  loadFinancials('fin-body');
+}
+function closeFinancialsPanel() {
+  document.getElementById('fin-overlay').style.display = 'none';
+  document.getElementById('fin-panel').style.right = '-780px';
+  document.body.style.overflow = '';
+}
+
+function openFilingsPanel() {
+  document.getElementById('fil-panel-sub').textContent = currentQuery.toUpperCase();
+  document.getElementById('fil-overlay').style.display = 'block';
+  document.getElementById('fil-panel').style.right = '0';
+  document.body.style.overflow = 'hidden';
+  loadFilings('fil-body');
+}
+function closeFilingsPanel() {
+  document.getElementById('fil-overlay').style.display = 'none';
+  document.getElementById('fil-panel').style.right = '-780px';
+  document.body.style.overflow = '';
+}
+
 function openValPanel(title) {
   document.getElementById('val-panel-title').textContent = title;
   document.getElementById('val-panel-ticker').textContent = currentQuery.toUpperCase();
@@ -870,8 +896,8 @@ function switchValTab(tab, el) {
   if (valData && valData.query === currentQuery) renderValTab(tab);
 }
 
-async function loadFinancials() {
-  const body = document.getElementById('val-body');
+async function loadFinancials(bodyId = 'fin-body') {
+  const body = document.getElementById(bodyId);
   const liveData = window._lastLiveData;
   const av = liveData?.historicalFinancials || [];
   const cf = liveData?.currentFinancials || {};
@@ -935,8 +961,8 @@ async function loadFinancials() {
     </div>`;
 }
 
-async function loadFilings() {
-  const body = document.getElementById('val-body');
+async function loadFilings(bodyId = 'fil-body') {
+  const body = document.getElementById(bodyId);
   try {
     const res = await fetch('https://djai.vercel.app/api/filings', {
       method: 'POST',
@@ -1176,8 +1202,6 @@ function renderValTab(tab) {
   if (tab === 'gauges') body.innerHTML = renderGauges();
   else if (tab === 'dcf') body.innerHTML = renderDCF();
   else if (tab === 'comps') body.innerHTML = renderComps();
-  else if (tab === 'financials') { body.innerHTML = '<div style="padding:16px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted)">Loading financial statements...</div>'; loadFinancials(); }
-  else if (tab === 'filings') { body.innerHTML = '<div style="padding:16px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted)">Loading SEC filings...</div>'; loadFilings(); }
   else if (tab === 'writeup') body.innerHTML = renderWriteUp();
   if (tab === 'gauges') requestAnimationFrame(() => drawGauges());
   if (tab === 'dcf') setupDCFInputs();
@@ -1460,6 +1484,36 @@ document.addEventListener('keydown', e => {
 
 <!-- VALUATION PANEL -->
 <div class="val-overlay" id="val-overlay" onclick="closeValPanel()"></div>
+<div class="val-overlay" id="fin-overlay" onclick="closeFinancialsPanel()" style="display:none"></div>
+<div class="val-overlay" id="fil-overlay" onclick="closeFilingsPanel()" style="display:none"></div>
+
+<!-- FINANCIALS PANEL -->
+<div class="val-panel" id="fin-panel" style="right:-780px">
+  <div class="val-panel-header">
+    <div>
+      <div class="val-panel-title" id="fin-panel-title">Financial Statements</div>
+      <div class="val-panel-sub" id="fin-panel-sub"></div>
+    </div>
+    <button class="val-close" onclick="closeFinancialsPanel()">✕</button>
+  </div>
+  <div class="val-body" id="fin-body" style="overflow-y:auto;padding:16px">
+    <div style="padding:24px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">Loading financial statements...</div>
+  </div>
+</div>
+
+<!-- FILINGS PANEL -->
+<div class="val-panel" id="fil-panel" style="right:-780px">
+  <div class="val-panel-header">
+    <div>
+      <div class="val-panel-title" id="fil-panel-title">SEC Filings</div>
+      <div class="val-panel-sub" id="fil-panel-sub"></div>
+    </div>
+    <button class="val-close" onclick="closeFilingsPanel()">✕</button>
+  </div>
+  <div class="val-body" id="fil-body" style="overflow-y:auto;padding:16px">
+    <div style="padding:24px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">Loading SEC filings...</div>
+  </div>
+</div>
 <div class="val-panel" id="val-panel" onclick="event.stopPropagation()">
   <div class="val-topbar">
     <div>
@@ -1472,8 +1526,6 @@ document.addEventListener('keydown', e => {
     <div class="val-tab active" onclick="switchValTab('gauges',this)">Ratings</div>
     <div class="val-tab" onclick="switchValTab('dcf',this)">DCF Model</div>
     <div class="val-tab" onclick="switchValTab('comps',this)">Comps</div>
-    <div class="val-tab" onclick="switchValTab('financials',this)">Financials</div>
-    <div class="val-tab" onclick="switchValTab('filings',this)">Filings</div>
     <div class="val-tab" onclick="switchValTab('writeup',this)">Write-Up</div>
   </div>
   <div class="val-body" id="val-body">
