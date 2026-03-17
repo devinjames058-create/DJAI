@@ -510,22 +510,36 @@ Use real, accurate financial data and knowledge. For stocks, include real metric
 
     const data = await res.json();
 
-    // Extract text content from response (may include tool use blocks)
+    // Extract text — grab last text block (after any tool use/results)
     let rawText = '';
-    for (const block of (data.content || [])) {
-      if (block.type === 'text') rawText += block.text;
+    const blocks = data.content || [];
+    // Prefer the last text block which contains the final JSON response
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].type === 'text' && blocks[i].text && blocks[i].text.trim().length > 10) {
+        rawText = blocks[i].text;
+        break;
+      }
+    }
+    // Fallback: concatenate all text blocks
+    if (!rawText) {
+      for (const block of blocks) {
+        if (block.type === 'text') rawText += block.text;
+      }
     }
 
-    // Parse JSON — strip markdown fences then find first { to last }
+    // Parse JSON — aggressively strip markdown and find outermost {}
     let result;
     try {
-      const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+      let cleaned = rawText
+        .replace(/```json\s*/gi, '')
+        .replace(/```\s*/g, '')
+        .trim();
       const start = cleaned.indexOf('{');
       const end = cleaned.lastIndexOf('}');
-      const jsonStr = start !== -1 && end !== -1 ? cleaned.slice(start, end + 1) : cleaned;
-      result = JSON.parse(jsonStr);
+      if (start === -1 || end === -1) throw new Error('No JSON object found');
+      result = JSON.parse(cleaned.slice(start, end + 1));
     } catch(e) {
-      renderError(query, 'Could not parse AI response. Raw: ' + rawText.slice(0, 200));
+      renderError(query, 'Could not parse AI response. Raw: ' + rawText.slice(0, 300));
       return;
     }
 
@@ -679,7 +693,15 @@ async function askFollowUp() {
       })
     });
     const data = await res.json();
-    const text = data.content?.find(b => b.type === 'text')?.text || 'No response.';
+    const blocks = data.content || [];
+    let text = '';
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].type === 'text' && blocks[i].text && blocks[i].text.trim().length > 5) {
+        text = blocks[i].text;
+        break;
+      }
+    }
+    if (!text) text = 'No response.';
     resultEl.textContent = text;
     resultEl.style.color = 'var(--muted2)';
     document.getElementById('ask-input').value = '';
@@ -797,12 +819,25 @@ Use the most current financial data available to you. Today is approximately Mar
     clearTimeout(timeout);
     const data = await res.json();
     let rawText = '';
-    for (const block of (data.content || [])) {
-      if (block.type === 'text') rawText += block.text;
+    const blocks = data.content || [];
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].type === 'text' && blocks[i].text && blocks[i].text.trim().length > 10) {
+        rawText = blocks[i].text;
+        break;
+      }
     }
-    const cleaned = rawText.replace(/```json/g,'').replace(/```/g,'').trim();
+    if (!rawText) {
+      for (const block of blocks) {
+        if (block.type === 'text') rawText += block.text;
+      }
+    }
+    let cleaned = rawText
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/g, '')
+      .trim();
     const start = cleaned.indexOf('{');
     const end = cleaned.lastIndexOf('}');
+    if (start === -1 || end === -1) throw new Error('No JSON found in valuation response');
     valData = JSON.parse(cleaned.slice(start, end+1));
     valData.query = currentQuery;
     // Only render if user is still on same search
