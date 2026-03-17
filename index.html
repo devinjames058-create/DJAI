@@ -404,15 +404,20 @@ async function fetchMarketData(query) {
   const ticker = query.trim().toUpperCase().split(' ')[0].replace(/[^A-Z.]/g, '');
   if (!ticker || ticker.length > 6) return null;
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000); // 8s max for market data
     const res = await fetch('https://djai.vercel.app/api/data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({ ticker })
     });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
     const json = await res.json();
     if (json.success && json.data) return json.data;
   } catch(e) {}
-  return null;
+  return null; // Always fail gracefully — search still works without live data
 }
 
 function formatMarketDataForPrompt(md) {
@@ -421,25 +426,8 @@ function formatMarketDataForPrompt(md) {
   const v = md.valuation || {};
   const f = md.currentFinancials || {};
   const a = md.analystData || {};
-  const pr = md.profile || {};
   const macro = md.macro || {};
-  const hist = md.historicalFinancials || [];
-
-  // Keep concise — only essential fields to preserve token budget
-  const histStr = hist.slice(0, 3).map(h =>
-    `${h.year}: Rev $${h.revenue ? (h.revenue/1e9).toFixed(1)+'B' : 'N/A'} NI $${h.netIncome ? (h.netIncome/1e9).toFixed(1)+'B' : 'N/A'} FCF $${h.freeCashflow ? (h.freeCashflow/1e9).toFixed(1)+'B' : 'N/A'}`
-  ).join(' | ');
-
-  return `[LIVE DATA - USE EXACTLY]:
-${md.ticker} | ${q.companyName || md.companyName} | ${pr.sector || ''} | ${pr.industry || ''}
-Price: $${q.price || md.price} (${q.priceChangePct || md.priceChangePct}) | Mkt Cap: ${v.marketCap || md.marketCap}
-P/E: ${v.pe || v.trailingPE || md.pe || 'N/A'} | Fwd P/E: ${v.forwardPE || md.forwardPE || 'N/A'} | EV/EBITDA: ${v.evToEbitda || 'N/A'} | P/B: ${v.priceToBook || 'N/A'}
-EPS: ${v.eps || md.eps || 'N/A'} | Beta: ${v.beta || md.beta || 'N/A'} | Div Yield: ${v.dividendYield || md.dividendYield || 'N/A'}
-52W: ${v.week52High || md.week52High || 'N/A'} / ${v.week52Low || md.week52Low || 'N/A'}
-Rev: ${f.revenue || md.revenue || 'N/A'} (${f.revenueGrowth || md.revenueGrowth || 'N/A'} YoY) | GPM: ${f.grossMargin || md.grossMargin || 'N/A'} | OPM: ${f.operatingMargin || md.operatingMargin || 'N/A'} | NPM: ${f.profitMargin || md.profitMargin || 'N/A'}
-FCF: ${f.freeCashflow || md.freeCashflow || 'N/A'} | Cash: ${f.totalCash || md.totalCash || 'N/A'} | Debt: ${f.totalDebt || md.totalDebt || 'N/A'} | ROE: ${f.returnOnEquity || md.returnOnEquity || 'N/A'}
-Analyst Target: ${a.targetMean || md.targetMeanPrice || 'N/A'} | Rating: ${a.recommendation || md.recommendationKey || 'N/A'} | RF Rate: ${macro.riskFreeRatePct || 'N/A'}
-${histStr ? 'Hist: ' + histStr : ''}`;
+  return `[LIVE DATA - USE EXACTLY]: ${md.ticker} Price $${q.price||md.price} MktCap ${v.marketCap||md.marketCap} PE ${v.pe||md.pe||'N/A'} FwdPE ${v.forwardPE||'N/A'} EPS ${v.eps||md.eps||'N/A'} Beta ${v.beta||md.beta||'N/A'} 52wH ${v.week52High||md.week52High||'N/A'} 52wL ${v.week52Low||md.week52Low||'N/A'} Rev ${f.revenue||md.revenue||'N/A'} RevGrowth ${f.revenueGrowth||'N/A'} GPM ${f.grossMargin||'N/A'} OPM ${f.operatingMargin||'N/A'} NPM ${f.profitMargin||'N/A'} FCF ${f.freeCashflow||'N/A'} Cash ${f.totalCash||'N/A'} Debt ${f.totalDebt||'N/A'} DE ${f.debtToEquity||'N/A'} ROE ${f.returnOnEquity||'N/A'} Target ${a.targetMean||'N/A'} Rating ${a.recommendation||'N/A'} RFR ${macro.riskFreeRatePct||'4.3%'}`;
 }
 
 let searchHistory = [];
@@ -543,7 +531,7 @@ When given a search query, return a JSON object with this exact structure:
   "context": "A comprehensive 3-4 sentence paragraph with deeper analysis, historical context, and forward-looking insight. This will be used to answer follow-up questions."
 }
 
-Use real, accurate financial data and knowledge. For stocks, include real metrics. For themes, adapt the structure to fit. Always return valid JSON only, no markdown, no preamble. Keep all string values concise — max 2 sentences per field. The entire JSON must fit within 3500 tokens.`;
+Return valid JSON only. No markdown. Keep string values to 1-2 sentences max.`;
 
   try {
     const res = await fetch('https://djai.vercel.app/api/proxy', {
@@ -553,7 +541,7 @@ Use real, accurate financial data and knowledge. For stocks, include real metric
         model: 'claude-sonnet-4-5',
         max_tokens: 4000,
         messages: [
-          { role: 'user', content: `Search query: "${query}"\nToday: ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}\n\n${liveDataStr || 'No live data available.'}\n\nReturn the JSON analysis object.` }
+          { role: 'user', content: `Search query: "${query}"\nDate: ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}\n\n${liveDataStr || 'Note: Live market data unavailable for this ticker. Use your best knowledge for current figures.'}\n\nReturn the JSON analysis object. Keep all text fields under 2 sentences. Complete the full JSON.` }
         ],
         system: systemPrompt
       })
@@ -672,7 +660,7 @@ function renderResults(query, r) {
     <div class="results">
       <div class="results-header">
         <div class="results-query">${r.title || query}</div>
-        <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}</div>
+        <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${liveData ? ' · <span style="color:var(--green)">Live data</span>' : ' · <span style="color:var(--muted)">No live data</span>'}</div>
         <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/'/g,"\\'")}')">◈ Run Valuation</button>
       </div>
 
