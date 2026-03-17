@@ -401,48 +401,70 @@ body::before {
 
 // ─── LIVE MARKET DATA ────────────────────────────────────────────
 async function fetchMarketData(query) {
-  // Only fetch market data for likely ticker/company searches
-  const tickerPattern = /^[A-Z]{1,5}$/.test(query.trim().toUpperCase());
-  const ticker = tickerPattern ? query.trim().toUpperCase() : query.trim().toUpperCase().split(' ')[0];
+  const ticker = query.trim().toUpperCase().split(' ')[0].replace(/[^A-Z.]/g, '');
+  if (!ticker || ticker.length > 6) return null;
   try {
-    const res = await fetch('https://djai.vercel.app/api/market', {
+    const res = await fetch('https://djai.vercel.app/api/data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ticker })
     });
     const json = await res.json();
-    if (json.success && json.data && json.data.price) return json.data;
+    if (json.success && json.data) return json.data;
   } catch(e) {}
   return null;
 }
 
 function formatMarketDataForPrompt(md) {
   if (!md) return '';
+  const q = md.quote || md;
+  const v = md.valuation || {};
+  const f = md.currentFinancials || {};
+  const a = md.analystData || {};
+  const pr = md.profile || {};
+  const macro = md.macro || {};
+  const hist = md.historicalFinancials || [];
+
+  const histStr = hist.length ? '\nHISTORICAL FINANCIALS (Annual):\n' + hist.map(h =>
+    `  ${h.year}: Revenue $${h.revenue ? (h.revenue/1e9).toFixed(2)+'B' : 'N/A'}, Net Income $${h.netIncome ? (h.netIncome/1e9).toFixed(2)+'B' : 'N/A'}, FCF $${h.freeCashflow ? (h.freeCashflow/1e9).toFixed(2)+'B' : 'N/A'}, EPS $${h.eps || 'N/A'}`
+  ).join('\n') : '';
+
   return `LIVE MARKET DATA (use these exact figures — do not substitute your own):
-Company: ${md.companyName}
-Current Price: $${md.price} ${md.currency}
-Price Change: ${md.priceChangePct}
-Market Cap: ${md.marketCap}
-P/E Ratio (TTM): ${md.pe}
-Forward P/E: ${md.forwardPE}
-EPS (TTM): ${md.eps}
-52-Week High: ${md.week52High}
-52-Week Low: ${md.week52Low}
-Revenue: ${md.revenue}
-Gross Margin: ${md.grossMargin}
-Operating Margin: ${md.operatingMargin}
-Profit Margin: ${md.profitMargin}
-Free Cash Flow: ${md.freeCashflow}
-Total Cash: ${md.totalCash}
-Total Debt: ${md.totalDebt}
-Return on Equity: ${md.returnOnEquity}
-Revenue Growth (YoY): ${md.revenueGrowth}
-Earnings Growth: ${md.earningsGrowth}
-Analyst Target Price: ${md.targetMeanPrice}
-Analyst Consensus: ${md.recommendationKey}
-Number of Analysts: ${md.numberOfAnalystOpinions}
-Beta: ${md.beta}
-Dividend Yield: ${md.dividendYield}
+Ticker: ${md.ticker}
+Company: ${q.companyName || md.companyName}
+Sector: ${pr.sector || 'N/A'} | Industry: ${pr.industry || 'N/A'}
+
+PRICE DATA:
+Current Price: $${q.price || md.price} ${q.currency || 'USD'}
+Price Change Today: ${q.priceChangePct || md.priceChangePct}
+52-Week High: ${v.week52High || md.week52High} | 52-Week Low: ${v.week52Low || md.week52Low}
+50-Day Avg: ${v.fiftyDayAvg} | 200-Day Avg: ${v.twoHundredDayAvg}
+
+VALUATION:
+Market Cap: ${v.marketCap || md.marketCap}
+P/E (TTM): ${v.pe || md.pe} | Forward P/E: ${v.forwardPE || md.forwardPE}
+PEG Ratio: ${v.pegRatio} | P/B: ${v.priceToBook} | P/S: ${v.priceToSales}
+EV/EBITDA: ${v.evToEbitda} | EV/Revenue: ${v.evToRevenue}
+EPS (TTM): ${v.eps || md.eps} | Beta: ${v.beta || md.beta}
+Shares Outstanding: ${v.sharesOutstanding}
+Dividend Yield: ${v.dividendYield || md.dividendYield}
+
+FINANCIALS (Current):
+Revenue: ${f.revenue || md.revenue} | Revenue Growth: ${f.revenueGrowth || md.revenueGrowth}
+Gross Margin: ${f.grossMargin || md.grossMargin} | Operating Margin: ${f.operatingMargin || md.operatingMargin}
+Profit Margin: ${f.profitMargin || md.profitMargin} | EBITDA Margin: ${f.ebitdaMargin}
+Free Cash Flow: ${f.freeCashflow || md.freeCashflow}
+Total Cash: ${f.totalCash || md.totalCash} | Total Debt: ${f.totalDebt || md.totalDebt}
+Debt/Equity: ${f.debtToEquity} | ROE: ${f.returnOnEquity || md.returnOnEquity} | ROA: ${f.returnOnAssets}
+${histStr}
+
+ANALYST DATA:
+Target Price (Mean): ${a.targetMean || md.targetMeanPrice} | High: ${a.targetHigh} | Low: ${a.targetLow}
+Consensus: ${a.recommendation || md.recommendationKey} | Analysts: ${a.numberOfAnalysts || md.numberOfAnalystOpinions}
+
+MACRO:
+Risk-Free Rate (10Y Treasury): ${macro.riskFreeRatePct || 'N/A'} — use for WACC calculation
+
 Data as of: ${md.dataTimestamp}`;
 }
 
