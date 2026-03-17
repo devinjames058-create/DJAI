@@ -25,7 +25,7 @@ module.exports = async function handler(req, res) {
   const [
     yfPriceRes, yfStatsRes, yfFinancialRes,
     avIncomeRes, avBalanceRes, avCashflowRes, avOverviewRes,
-    fredRes
+    fredRes, yfNewsRes
   ] = await Promise.allSettled([
     // Yahoo Finance — price, stats, financials
     fetch(`https://${YF_HOST}/api/stock/get-price?region=US&symbol=${encodeURIComponent(ticker)}`, { headers: yfHeaders }),
@@ -40,7 +40,9 @@ module.exports = async function handler(req, res) {
     // Alpha Vantage — company overview (sector, industry, description, PE, EPS, beta)
     fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker)}&apikey=${AV_KEY}`),
     // FRED — 10Y treasury yield (risk-free rate for WACC)
-    fetch(`https://fred.stlouisfed.org/graph/fredgraph.json?id=DGS10&vintage_date=${new Date().toISOString().split('T')[0]}`)
+    fetch(`https://fred.stlouisfed.org/graph/fredgraph.json?id=DGS10&vintage_date=${new Date().toISOString().split('T')[0]}`),
+    // Yahoo Finance — real news with links
+    fetch(`https://${YF_HOST}/api/stock/get-news?region=US&symbol=${encodeURIComponent(ticker)}&newsCount=8`, { headers: yfHeaders })
   ]);
 
   // ── Parse responses safely ────────────────────────────────────────
@@ -54,11 +56,11 @@ module.exports = async function handler(req, res) {
   const [
     yfPrice, yfStats, yfFinancial,
     avIncome, avBalance, avCashflow, avOverview,
-    fredData
+    fredData, yfNewsData
   ] = await Promise.all([
     safeJson(yfPriceRes), safeJson(yfStatsRes), safeJson(yfFinancialRes),
     safeJson(avIncomeRes), safeJson(avBalanceRes), safeJson(avCashflowRes), safeJson(avOverviewRes),
-    safeJson(fredRes)
+    safeJson(fredRes), safeJson(yfNewsRes)
   ]);
 
   // ── Extract Yahoo Finance data ────────────────────────────────────
@@ -208,7 +210,21 @@ module.exports = async function handler(req, res) {
       riskFreeRate: riskFreeRate,
       riskFreeRatePct: riskFreeRate ? (riskFreeRate * 100).toFixed(2) + '%' : null,
       riskFreeRateSource: '10Y US Treasury (FRED)'
-    }
+    },
+
+    // REAL NEWS — Yahoo Finance with links
+    news: (() => {
+      try {
+        const items = yfNewsData?.body || yfNewsData?.data?.news || yfNewsData?.items || [];
+        return items.slice(0, 8).map(n => ({
+          headline: n.title || n.headline || '',
+          url: n.url || n.link || n.clickThroughUrl?.url || null,
+          source: n.publisher || n.source || n.providerDisplayName || 'Yahoo Finance',
+          publishedAt: n.providerPublishTime ? new Date(n.providerPublishTime * 1000).toLocaleDateString() : (n.pubDate || ''),
+          thumbnail: n.thumbnail?.resolutions?.[0]?.url || null
+        })).filter(n => n.headline);
+      } catch(e) { return []; }
+    })()
   };
 
   return res.status(200).json({ success: true, data: aggregated });
