@@ -425,47 +425,21 @@ function formatMarketDataForPrompt(md) {
   const macro = md.macro || {};
   const hist = md.historicalFinancials || [];
 
-  const histStr = hist.length ? '\nHISTORICAL FINANCIALS (Annual):\n' + hist.map(h =>
-    `  ${h.year}: Revenue $${h.revenue ? (h.revenue/1e9).toFixed(2)+'B' : 'N/A'}, Net Income $${h.netIncome ? (h.netIncome/1e9).toFixed(2)+'B' : 'N/A'}, FCF $${h.freeCashflow ? (h.freeCashflow/1e9).toFixed(2)+'B' : 'N/A'}, EPS $${h.eps || 'N/A'}`
-  ).join('\n') : '';
+  // Keep concise — only essential fields to preserve token budget
+  const histStr = hist.slice(0, 3).map(h =>
+    `${h.year}: Rev $${h.revenue ? (h.revenue/1e9).toFixed(1)+'B' : 'N/A'} NI $${h.netIncome ? (h.netIncome/1e9).toFixed(1)+'B' : 'N/A'} FCF $${h.freeCashflow ? (h.freeCashflow/1e9).toFixed(1)+'B' : 'N/A'}`
+  ).join(' | ');
 
-  return `LIVE MARKET DATA (use these exact figures — do not substitute your own):
-Ticker: ${md.ticker}
-Company: ${q.companyName || md.companyName}
-Sector: ${pr.sector || 'N/A'} | Industry: ${pr.industry || 'N/A'}
-
-PRICE DATA:
-Current Price: $${q.price || md.price} ${q.currency || 'USD'}
-Price Change Today: ${q.priceChangePct || md.priceChangePct}
-52-Week High: ${v.week52High || md.week52High} | 52-Week Low: ${v.week52Low || md.week52Low}
-50-Day Avg: ${v.fiftyDayAvg} | 200-Day Avg: ${v.twoHundredDayAvg}
-
-VALUATION:
-Market Cap: ${v.marketCap || md.marketCap}
-P/E (TTM): ${v.pe || v.trailingPE || md.pe || 'N/A'} | Forward P/E: ${v.forwardPE || md.forwardPE || 'N/A'}
-PEG Ratio: ${v.pegRatio} | P/B: ${v.priceToBook} | P/S: ${v.priceToSales}
-EV/EBITDA: ${v.evToEbitda} | EV/Revenue: ${v.evToRevenue}
-EPS (TTM): ${v.eps || md.eps} | Beta: ${v.beta || md.beta}
-Shares Outstanding: ${v.sharesOutstanding}
-Dividend Yield: ${v.dividendYield || md.dividendYield}
-
-FINANCIALS (Current):
-Revenue: ${f.revenue || md.revenue} | Revenue Growth: ${f.revenueGrowth || md.revenueGrowth}
-Gross Margin: ${f.grossMargin || md.grossMargin} | Operating Margin: ${f.operatingMargin || md.operatingMargin}
-Profit Margin: ${f.profitMargin || md.profitMargin} | EBITDA Margin: ${f.ebitdaMargin}
-Free Cash Flow: ${f.freeCashflow || md.freeCashflow}
-Total Cash: ${f.totalCash || md.totalCash} | Total Debt: ${f.totalDebt || md.totalDebt}
-Debt/Equity: ${f.debtToEquity} | ROE: ${f.returnOnEquity || md.returnOnEquity} | ROA: ${f.returnOnAssets}
-${histStr}
-
-ANALYST DATA:
-Target Price (Mean): ${a.targetMean || md.targetMeanPrice} | High: ${a.targetHigh} | Low: ${a.targetLow}
-Consensus: ${a.recommendation || md.recommendationKey} | Analysts: ${a.numberOfAnalysts || md.numberOfAnalystOpinions}
-
-MACRO:
-Risk-Free Rate (10Y Treasury): ${macro.riskFreeRatePct || 'N/A'} — use for WACC calculation
-
-Data as of: ${md.dataTimestamp}`;
+  return `[LIVE DATA - USE EXACTLY]:
+${md.ticker} | ${q.companyName || md.companyName} | ${pr.sector || ''} | ${pr.industry || ''}
+Price: $${q.price || md.price} (${q.priceChangePct || md.priceChangePct}) | Mkt Cap: ${v.marketCap || md.marketCap}
+P/E: ${v.pe || v.trailingPE || md.pe || 'N/A'} | Fwd P/E: ${v.forwardPE || md.forwardPE || 'N/A'} | EV/EBITDA: ${v.evToEbitda || 'N/A'} | P/B: ${v.priceToBook || 'N/A'}
+EPS: ${v.eps || md.eps || 'N/A'} | Beta: ${v.beta || md.beta || 'N/A'} | Div Yield: ${v.dividendYield || md.dividendYield || 'N/A'}
+52W: ${v.week52High || md.week52High || 'N/A'} / ${v.week52Low || md.week52Low || 'N/A'}
+Rev: ${f.revenue || md.revenue || 'N/A'} (${f.revenueGrowth || md.revenueGrowth || 'N/A'} YoY) | GPM: ${f.grossMargin || md.grossMargin || 'N/A'} | OPM: ${f.operatingMargin || md.operatingMargin || 'N/A'} | NPM: ${f.profitMargin || md.profitMargin || 'N/A'}
+FCF: ${f.freeCashflow || md.freeCashflow || 'N/A'} | Cash: ${f.totalCash || md.totalCash || 'N/A'} | Debt: ${f.totalDebt || md.totalDebt || 'N/A'} | ROE: ${f.returnOnEquity || md.returnOnEquity || 'N/A'}
+Analyst Target: ${a.targetMean || md.targetMeanPrice || 'N/A'} | Rating: ${a.recommendation || md.recommendationKey || 'N/A'} | RF Rate: ${macro.riskFreeRatePct || 'N/A'}
+${histStr ? 'Hist: ' + histStr : ''}`;
 }
 
 let searchHistory = [];
@@ -560,16 +534,16 @@ When given a search query, return a JSON object with this exact structure:
     {"headline": "headline text", "source": "Source Name", "time": "X days ago", "sentiment": "positive|negative|neutral"}
   ],
   "comps": [
-    {"name": "Company/Entity", "metric1": "value", "metric2": "value", "metric3": "value", "change": "+X.X%", "direction": "up|down"}
+    {"name": "Company/Entity", "metric1": "Market Cap", "metric2": "Revenue", "metric3": "Op Margin", "change": "+X.X%", "direction": "up|down"}
   ],
-  "compsHeaders": ["Name", "Header2", "Header3", "Header4", "Chg"],
+  "compsHeaders": ["Name", "Mkt Cap", "Revenue", "Op Margin", "Today"],
   "risks": [
     {"level": "high|med|low", "text": "Risk description"}
   ],
   "context": "A comprehensive 3-4 sentence paragraph with deeper analysis, historical context, and forward-looking insight. This will be used to answer follow-up questions."
 }
 
-Use real, accurate financial data and knowledge. For stocks, include real metrics. For themes, adapt the structure to fit. Always return valid JSON only, no markdown, no preamble.`;
+Use real, accurate financial data and knowledge. For stocks, include real metrics. For themes, adapt the structure to fit. Always return valid JSON only, no markdown, no preamble. Keep all string values concise — max 2 sentences per field. The entire JSON must fit within 3500 tokens.`;
 
   try {
     const res = await fetch('https://djai.vercel.app/api/proxy', {
@@ -577,7 +551,7 @@ Use real, accurate financial data and knowledge. For stocks, include real metric
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 2000,
+        max_tokens: 4000,
         messages: [
           { role: 'user', content: `Search query: "${query}"\nToday: ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}\n\n${liveDataStr || 'No live data available.'}\n\nReturn the JSON analysis object.` }
         ],
@@ -670,14 +644,23 @@ function renderResults(query, r) {
 
   const compsHeaders = r.compsHeaders || ['Name', 'Metric 1', 'Metric 2', 'Metric 3', 'Chg'];
   const compsHeadHTML = compsHeaders.map(h => `<th>${h}</th>`).join('');
-  const compsRowHTML = (r.comps || []).map(c => `
-    <tr>
-      <td>${c.name}</td>
-      <td class="num">${c.metric1 || '—'}</td>
-      <td class="num">${c.metric2 || '—'}</td>
-      <td class="num">${c.metric3 || '—'}</td>
-      <td class="${c.direction === 'up' ? 'up' : 'down'}">${c.change || '—'}</td>
-    </tr>`).join('');
+  const compsRowHTML = (r.comps || []).map(c => {
+    // Get all non-metadata keys as data columns (handles any field names)
+    const skipKeys = new Set(['name','change','direction','isTarget']);
+    const dataKeys = Object.keys(c).filter(k => !skipKeys.has(k));
+    // Build cells: use metric1/2/3 if present, otherwise use whatever keys exist
+    const m1 = c.metric1 || c[dataKeys[0]] || '—';
+    const m2 = c.metric2 || c[dataKeys[1]] || '—';
+    const m3 = c.metric3 || c[dataKeys[2]] || '—';
+    const chgColor = c.direction === 'up' ? 'up' : c.direction === 'down' ? 'down' : '';
+    return `<tr>
+      <td>${c.name || '—'}</td>
+      <td class="num">${m1}</td>
+      <td class="num">${m2}</td>
+      <td class="num">${m3}</td>
+      <td class="${chgColor}">${c.change || '—'}</td>
+    </tr>`;
+  }).join('');
 
   const risksHTML = (r.risks || []).map(rk => `
     <div class="risk-item">
