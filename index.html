@@ -442,7 +442,7 @@ Price Change Today: ${q.priceChangePct || md.priceChangePct}
 
 VALUATION:
 Market Cap: ${v.marketCap || md.marketCap}
-P/E (TTM): ${v.pe || md.pe} | Forward P/E: ${v.forwardPE || md.forwardPE}
+P/E (TTM): ${v.pe || v.trailingPE || md.pe || 'N/A'} | Forward P/E: ${v.forwardPE || md.forwardPE || 'N/A'}
 PEG Ratio: ${v.pegRatio} | P/B: ${v.priceToBook} | P/S: ${v.priceToSales}
 EV/EBITDA: ${v.evToEbitda} | EV/Revenue: ${v.evToRevenue}
 EPS (TTM): ${v.eps || md.eps} | Beta: ${v.beta || md.beta}
@@ -831,102 +831,135 @@ async function fetchValuation(title) {
   const liveValData = await fetchMarketData(currentQuery);
   const liveValStr = formatMarketDataForPrompt(liveValData);
 
-  const prompt = `You are an elite equity research analyst. Generate a complete valuation model for: "${title}" (search context: ${currentQuery}).
+  // SPLIT into two focused prompts to avoid timeout
+  // Part 1: Ratings + Write-up (fast)
+  const prompt1 = `You are an elite equity research analyst. Analyze: "${title}" (${currentQuery}).
+${liveValStr ? liveValStr : ''}
 
-${liveValStr ? liveValStr + '\n\nIMPORTANT: Use the live market data above as the basis for your DCF, comps, and all financial figures. Current price must match the live data exactly.' : ''}
-
-Return ONLY a JSON object with this exact structure:
+Return ONLY this JSON (no markdown):
 {
   "query": "${currentQuery}",
-  "ticker": "TICKER",
+  "ticker": "${currentQuery.toUpperCase()}",
   "company": "Full Company Name",
-  "currentPrice": 000.00,
+  "currentPrice": 0.00,
   "ratings": {
     "signal": "BUY|HOLD|SELL",
-    "signalScore": 0-10,
-    "signalRationale": "2-3 sentence rationale for buy/hold/sell",
+    "signalScore": 7,
+    "signalRationale": "2-3 sentence rationale",
     "valuation": "UNDERVALUED|FAIRLY VALUED|OVERVALUED",
-    "valuationScore": 0-10,
-    "valuationRationale": "2-3 sentence rationale for valuation status",
+    "valuationScore": 6,
+    "valuationRationale": "2-3 sentence rationale",
     "upside": "+X.X%"
   },
+  "writeup": {
+    "businessDescription": "3-4 sentences.",
+    "financialPerformance": "3-4 sentences.",
+    "catalysts": "3-4 sentences.",
+    "risks": "2-3 sentences.",
+    "outlook": "2-3 sentences."
+  }
+}`;
+
+  // Part 2: DCF + Comps (runs after part 1)
+  const prompt2 = `You are an elite equity research analyst. Build DCF and comps for: "${title}" (${currentQuery}).
+${liveValStr ? liveValStr : ''}
+
+Return ONLY this JSON (no markdown):
+{
   "dcf": {
     "wacc": 0.00,
     "terminalGrowth": 0.00,
     "years": 5,
-    "revenueBase": 000.0,
+    "revenueBase": 0.0,
     "projections": [
-      {"year": "2024", "revenue": 000.0, "revenueGrowth": 0.00, "ebitdaMargin": 0.00, "ebitda": 000.0, "fcf": 000.0, "discountFactor": 0.000, "pvFcf": 000.0}
+      {"year": "2025", "revenue": 0.0, "revenueGrowth": 0.00, "ebitdaMargin": 0.00, "ebitda": 0.0, "fcf": 0.0, "discountFactor": 0.000, "pvFcf": 0.0},
+      {"year": "2026", "revenue": 0.0, "revenueGrowth": 0.00, "ebitdaMargin": 0.00, "ebitda": 0.0, "fcf": 0.0, "discountFactor": 0.000, "pvFcf": 0.0},
+      {"year": "2027", "revenue": 0.0, "revenueGrowth": 0.00, "ebitdaMargin": 0.00, "ebitda": 0.0, "fcf": 0.0, "discountFactor": 0.000, "pvFcf": 0.0},
+      {"year": "2028", "revenue": 0.0, "revenueGrowth": 0.00, "ebitdaMargin": 0.00, "ebitda": 0.0, "fcf": 0.0, "discountFactor": 0.000, "pvFcf": 0.0},
+      {"year": "2029", "revenue": 0.0, "revenueGrowth": 0.00, "ebitdaMargin": 0.00, "ebitda": 0.0, "fcf": 0.0, "discountFactor": 0.000, "pvFcf": 0.0}
     ],
-    "terminalValue": 00000.0,
-    "pvTerminalValue": 00000.0,
-    "totalPV": 00000.0,
-    "netDebt": 0000.0,
-    "sharesOutstanding": 000.0,
-    "impliedPrice": 000.00,
-    "currentPrice": 000.00,
+    "terminalValue": 0.0,
+    "pvTerminalValue": 0.0,
+    "totalPV": 0.0,
+    "netDebt": 0.0,
+    "sharesOutstanding": 0.0,
+    "impliedPrice": 0.00,
+    "currentPrice": 0.00,
     "upsideDownside": "+X.X%"
   },
   "comps": {
     "headers": ["Company", "EV/EBITDA", "P/E", "P/S", "EV/Revenue", "Premium/Discount"],
     "rows": [
-      {"name": "Company Name", "evEbitda": "00.0x", "pe": "00.0x", "ps": "0.0x", "evRevenue": "0.0x", "premDisc": "+X.X%", "isTarget": false}
+      {"name": "Peer 1", "evEbitda": "0.0x", "pe": "0.0x", "ps": "0.0x", "evRevenue": "0.0x", "premDisc": "+X.X%", "isTarget": false},
+      {"name": "Peer 2", "evEbitda": "0.0x", "pe": "0.0x", "ps": "0.0x", "evRevenue": "0.0x", "premDisc": "+X.X%", "isTarget": false},
+      {"name": "Peer 3", "evEbitda": "0.0x", "pe": "0.0x", "ps": "0.0x", "evRevenue": "0.0x", "premDisc": "+X.X%", "isTarget": false},
+      {"name": "${currentQuery.toUpperCase()}", "evEbitda": "0.0x", "pe": "0.0x", "ps": "0.0x", "evRevenue": "0.0x", "premDisc": "—", "isTarget": true}
     ],
-    "sectorMedianEvEbitda": "00.0x",
-    "sectorMedianPe": "00.0x"
-  },
-  "writeup": {
-    "businessDescription": "3-4 sentences on what the company does, its market position, key segments, and competitive moat.",
-    "financialPerformance": "3-4 sentences on recent financial performance — revenue trends, margin profile, FCF generation, balance sheet strength.",
-    "catalysts": "3-4 sentences on near and medium term catalysts — product launches, market expansion, macro tailwinds, strategic initiatives.",
-    "risks": "2-3 sentences on key risks — competitive threats, macro sensitivity, execution risk.",
-    "outlook": "2-3 sentences with forward looking view, price target rationale, and investment conclusion."
+    "sectorMedianEvEbitda": "0.0x",
+    "sectorMedianPe": "0.0x"
   }
-}
+}`;
 
-Use the most current financial data available to you. Today is approximately March 2026. For GS for example, the current stock price is around $790+. Use realistic current market data — do not use data from 2023 or early 2024 as that is outdated. If you are uncertain about exact current price, provide your best estimate based on the most recent data you have and note the approximate date of your data in the context field. Return ONLY valid JSON, no markdown.`;
+  const callClaude = async (prompt, maxTokens = 1500) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 40000);
+    try {
+      const res = await fetch('https://djai.vercel.app/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-5',
+          max_tokens: maxTokens,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
+      let rawText = '';
+      const blocks = data.content || [];
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].type === 'text' && blocks[i].text && blocks[i].text.trim().length > 10) {
+          rawText = blocks[i].text; break;
+        }
+      }
+      const cleaned = rawText.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start === -1 || end === -1) throw new Error('No JSON found');
+      return JSON.parse(cleaned.slice(start, end + 1));
+    } catch(e) {
+      clearTimeout(timeout);
+      throw e;
+    }
+  };
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
   try {
-    const res = await fetch('https://djai.vercel.app/api/proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 3000,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    clearTimeout(timeout);
-    const data = await res.json();
-    let rawText = '';
-    const blocks = data.content || [];
-    for (let i = blocks.length - 1; i >= 0; i--) {
-      if (blocks[i].type === 'text' && blocks[i].text && blocks[i].text.trim().length > 10) {
-        rawText = blocks[i].text;
-        break;
-      }
+    // Show loading state
+    document.getElementById('val-body').innerHTML = `
+      <div class="val-loading">
+        <div class="loading-bar" style="width:200px"><div class="loading-fill"></div></div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.1em">Loading ratings & analysis...</div>
+      </div>`;
+
+    // Run both calls in parallel for speed
+    const [part1, part2] = await Promise.allSettled([
+      callClaude(prompt1, 1200),
+      callClaude(prompt2, 1500)
+    ]);
+
+    if (part1.status === 'rejected') throw new Error(part1.reason?.message || 'Ratings failed');
+
+    // Merge results
+    valData = { ...part1.value };
+    if (part2.status === 'fulfilled') {
+      valData.dcf = part2.value.dcf;
+      valData.comps = part2.value.comps;
     }
-    if (!rawText) {
-      for (const block of blocks) {
-        if (block.type === 'text') rawText += block.text;
-      }
-    }
-    let cleaned = rawText
-      .replace(/```json\s*/gi, '')
-      .replace(/```\s*/g, '')
-      .trim();
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start === -1 || end === -1) throw new Error('No JSON found in valuation response');
-    valData = JSON.parse(cleaned.slice(start, end+1));
     valData.query = currentQuery;
-    // Only render if user is still on same search
+
     if (valData.query === currentQuery) renderValTab(activeValTab);
   } catch(e) {
-    clearTimeout(timeout);
     const msg = e.name === 'AbortError' ? 'Request timed out — try again' : e.message;
     document.getElementById('val-body').innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted2)">Error loading valuation: ${msg}</div>`;
   }
