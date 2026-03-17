@@ -502,7 +502,7 @@ Use real, accurate financial data and knowledge. For stocks, include real metric
         model: 'claude-sonnet-4-5',
         max_tokens: 2000,
         messages: [
-          { role: 'user', content: `Search query: "${query}"\n\nUsing your knowledge up to your training cutoff, return the JSON analysis object as specified. Be as accurate and detailed as possible with real data. Today is ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}.` }
+          { role: 'user', content: `Search query: "${query}"\n\nToday is ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}. IMPORTANT: Use the most current data you have. For stock prices, market caps, and financial metrics, clearly note if the data may be from your training cutoff and use approximate current figures based on latest trends you know. Return the JSON analysis object as specified.` }
         ],
         system: systemPrompt
       })
@@ -779,7 +779,7 @@ Return ONLY a JSON object with this exact structure:
   }
 }
 
-Use real financial data. Be specific with numbers. Return ONLY valid JSON, no markdown.`;
+Use the most current financial data available to you. Today is approximately March 2026. For GS for example, the current stock price is around $790+. Use realistic current market data — do not use data from 2023 or early 2024 as that is outdated. If you are uncertain about exact current price, provide your best estimate based on the most recent data you have and note the approximate date of your data in the context field. Return ONLY valid JSON, no markdown.`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45000);
