@@ -911,13 +911,6 @@ Return ONLY this JSON (no markdown):
       });
       clearTimeout(timeout);
       const data = await res.json();
-      let rawText = '';
-      const blocks = data.content || [];
-      for (let i = blocks.length - 1; i >= 0; i--) {
-        if (blocks[i].type === 'text' && blocks[i].text && blocks[i].text.trim().length > 10) {
-          rawText = blocks[i].text; break;
-        }
-      }
       // Collect ALL text blocks
       let allText = '';
       for (const b of (data.content || [])) {
@@ -950,15 +943,23 @@ Return ONLY this JSON (no markdown):
 
     if (part1.status === 'rejected') throw new Error(part1.reason?.message || 'Ratings failed');
 
-    // Merge results
+    // Merge results — show ratings immediately, then update with DCF
     valData = { ...part1.value };
-    if (part2.status === 'fulfilled') {
-      valData.dcf = part2.value.dcf;
-      valData.comps = part2.value.comps;
-    }
     valData.query = currentQuery;
 
+    // Show ratings immediately
     if (valData.query === currentQuery) renderValTab(activeValTab);
+
+    // Merge DCF/comps when ready and re-render if still on gauges/dcf tab
+    if (part2.status === 'fulfilled' && part2.value) {
+      valData.dcf = part2.value.dcf;
+      valData.comps = part2.value.comps;
+      // Re-render gauges to update fair value, re-render dcf if on that tab
+      if (valData.query === currentQuery) {
+        if (activeValTab === 'gauges') renderValTab('gauges');
+        else if (activeValTab === 'dcf') renderValTab('dcf');
+      }
+    }
   } catch(e) {
     const msg = e.name === 'AbortError' ? 'Request timed out — try again' : e.message;
     document.getElementById('val-body').innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted2)">Error loading valuation: ${msg}</div>`;
@@ -1003,15 +1004,15 @@ function renderGauges() {
       <div class="val-section-title">Price Target & Upside</div>
       <div style="display:flex;gap:24px;align-items:baseline">
         <div>
-          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--gold2)">${r.upside}</div>
+          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--gold2)">${valData.dcf?.upsideDownside || r.upside || '—'}</div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">Implied Upside</div>
         </div>
         <div>
-          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--text)">$${valData.dcf?.impliedPrice?.toFixed(2) || '—'}</div>
+          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--text)">$${valData.dcf?.impliedPrice ? Number(valData.dcf.impliedPrice).toFixed(2) : (valData.profile?.analystTargetPrice || valData.analystData?.targetMean || '—')}</div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">Fair Value Est.</div>
         </div>
         <div>
-          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--muted2)">$${valData.currentPrice?.toFixed(2) || '—'}</div>
+          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--muted2)">$${valData.currentPrice ? Number(valData.currentPrice).toFixed(2) : (valData.quote?.price ? Number(valData.quote.price).toFixed(2) : '—')}</div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">Current Price</div>
         </div>
       </div>
@@ -1076,17 +1077,23 @@ function drawNeedle(canvasId, score, color) {
 
 function renderDCF() {
   const d = valData.dcf;
-  if (!d) return '<div style="padding:24px;color:var(--muted2);font-size:12px">No DCF data available.</div>';
+  if (!d) return `<div style="padding:24px">
+    <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:12px">Building DCF model...</div>
+    <div class="loading-bar" style="width:100%"><div class="loading-fill"></div></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:10px">DCF is computed in parallel — click back to Ratings then return here</div>
+  </div>`;
+  const safe = (v, dec=1) => { const n = Number(v); return isNaN(n) ? '—' : n.toFixed(dec); };
+  const safePct = (v) => { const n = Number(v); return isNaN(n) ? '0.0' : (Math.abs(n) < 2 ? (n*100).toFixed(1) : n.toFixed(1)); };
   const projHTML = (d.projections || []).map(p => `
     <tr>
       <td>${p.year}</td>
-      <td>$${Number(p.revenue).toFixed(1)}B</td>
-      <td><input class="dcf-input" data-field="rev-${p.year}" value="${(Number(p.revenueGrowth)*100).toFixed(1)}" onchange="recalcDCF()">%</td>
-      <td><input class="dcf-input" data-field="margin-${p.year}" value="${(Number(p.ebitdaMargin)*100).toFixed(1)}" onchange="recalcDCF()">%</td>
-      <td>$${Number(p.ebitda).toFixed(1)}B</td>
-      <td>$${Number(p.fcf).toFixed(1)}B</td>
-      <td>${Number(p.discountFactor).toFixed(3)}</td>
-      <td>$${Number(p.pvFcf).toFixed(1)}B</td>
+      <td>$${safe(p.revenue)}B</td>
+      <td><input class="dcf-input" data-field="rev-${p.year}" value="${safePct(p.revenueGrowth)}" onchange="recalcDCF()">%</td>
+      <td><input class="dcf-input" data-field="margin-${p.year}" value="${safePct(p.ebitdaMargin)}" onchange="recalcDCF()">%</td>
+      <td>$${safe(p.ebitda)}B</td>
+      <td>$${safe(p.fcf)}B</td>
+      <td>${safe(p.discountFactor, 3)}</td>
+      <td>$${safe(p.pvFcf)}B</td>
     </tr>`).join('');
 
   return `
@@ -1181,12 +1188,20 @@ function _doRecalcDCF() {
 function renderComps() {
   const c = valData.comps;
   if (!c) return '<div style="padding:24px;color:var(--muted2);font-size:12px">No comps data available.</div>';
-  const rowsHTML = (c.rows || []).map(r => `
-    <tr style="${r.isTarget ? 'background:rgba(201,168,76,0.06)' : ''}">
+  const rowsHTML = (c.rows || []).map(r => {
+    const discColor = !r.premDisc || r.premDisc === '—' ? 'var(--muted2)' :
+      r.premDisc.startsWith('+') ? 'var(--green)' : 'var(--red)';
+    // Handle both named fields and metric1/2/3 fallback
+    const col1 = r.evEbitda || r.metric1 || '—';
+    const col2 = r.pe || r.metric2 || '—';
+    const col3 = r.ps || r.metric3 || '—';
+    const col4 = r.evRevenue || r.metric4 || '—';
+    return `<tr style="${r.isTarget ? 'background:rgba(201,168,76,0.06)' : ''}">
       <td style="${r.isTarget ? 'color:var(--gold)' : ''}">${r.name}${r.isTarget ? ' ◈' : ''}</td>
-      <td>${r.evEbitda}</td><td>${r.pe}</td><td>${r.ps}</td><td>${r.evRevenue}</td>
-      <td style="color:${r.premDisc && r.premDisc.startsWith('+') ? 'var(--green)' : 'var(--red)'}">${r.premDisc}</td>
-    </tr>`).join('');
+      <td>${col1}</td><td>${col2}</td><td>${col3}</td><td>${col4}</td>
+      <td style="color:${discColor}">${r.premDisc || '—'}</td>
+    </tr>`;
+  }).join('');
 
   return `
     <div class="val-section">
