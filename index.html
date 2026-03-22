@@ -236,6 +236,43 @@ body::before {
 .margin-bar { height: 4px; background: var(--gold); border-radius: 2px; min-width: 2px; }
 .margin-val { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--gold2); }
 
+/* CONSENSUS BAR */
+.consensus-wrap { margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
+.consensus-title { font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.09em; color:var(--muted); margin-bottom:10px; }
+.consensus-row { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+.consensus-label { font-family:'DM Mono',monospace; font-size:9px; color:var(--muted); width:60px; flex-shrink:0; text-transform:uppercase; }
+.signal-bar { flex:1; height:8px; border-radius:4px; background:var(--surface3); position:relative; overflow:hidden; }
+.signal-fill { height:100%; border-radius:4px; transition:width .4s; }
+.consensus-val { font-family:'DM Mono',monospace; font-size:11px; font-weight:500; width:80px; text-align:right; flex-shrink:0; }
+.signal-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 12px; border-radius:20px; font-family:'DM Mono',monospace; font-size:10px; font-weight:500; letter-spacing:0.05em; }
+.signal-badge.buy { background:rgba(76,175,125,0.15); color:var(--green); border:1px solid rgba(76,175,125,0.3); }
+.signal-badge.hold { background:rgba(224,155,60,0.15); color:var(--amber); border:1px solid rgba(224,155,60,0.3); }
+.signal-badge.sell { background:rgba(224,92,92,0.15); color:var(--red); border:1px solid rgba(224,92,92,0.3); }
+.val-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 12px; border-radius:20px; font-family:'DM Mono',monospace; font-size:10px; font-weight:500; }
+.val-badge.under { background:rgba(76,175,125,0.15); color:var(--green); border:1px solid rgba(76,175,125,0.3); }
+.val-badge.fair { background:rgba(201,168,76,0.15); color:var(--gold); border:1px solid rgba(201,168,76,0.3); }
+.val-badge.over { background:rgba(224,92,92,0.15); color:var(--red); border:1px solid rgba(224,92,92,0.3); }
+
+/* QUICK PITCH PANEL */
+.qp-panel { position:fixed; top:0; right:-820px; width:800px; height:100vh; background:var(--surface); border-left:1px solid var(--border2); display:flex; flex-direction:column; z-index:501; transition:right .3s cubic-bezier(.4,0,.2,1); overflow:hidden; will-change:right; }
+.qp-panel.open { right:0; }
+.qp-topbar { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); flex-shrink:0; }
+.qp-title { font-family:'Playfair Display',serif; font-size:16px; color:var(--gold); }
+.qp-sub { font-family:'DM Mono',monospace; font-size:10px; color:var(--muted); margin-top:2px; }
+.qp-body { flex:1; overflow-y:auto; padding:20px; }
+.qp-phase { margin-bottom:20px; }
+.qp-phase-title { font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+.qp-progress { display:flex; flex-direction:column; gap:8px; padding:20px; }
+.qp-step { display:flex; align-items:center; gap:10px; font-size:12px; color:var(--muted2); }
+.qp-step.active { color:var(--gold); }
+.qp-step.done { color:var(--green); }
+.qp-step-icon { width:16px; height:16px; border-radius:50%; border:1px solid currentColor; display:flex; align-items:center; justify-content:center; font-size:8px; flex-shrink:0; }
+.qp-deliverable { display:flex; align-items:center; gap:12px; padding:10px 12px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; margin-bottom:8px; }
+.qp-del-icon { font-size:16px; flex-shrink:0; }
+.qp-del-name { font-size:12px; color:var(--text); }
+.qp-del-sub { font-size:10px; color:var(--muted); font-family:'DM Mono',monospace; }
+.qp-del-link { margin-left:auto; font-family:'DM Mono',monospace; font-size:10px; color:var(--gold); text-decoration:none; padding:4px 10px; border:1px solid rgba(201,168,76,0.3); border-radius:5px; }
+
 /* NEWS WITH LINKS */
 .news-item-link { text-decoration: none; color: inherit; display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); transition: background .1s; }
 .news-item-link:last-child { border-bottom: none; }
@@ -414,12 +451,12 @@ body::before {
       </div>
       <div class="right-section">
         <div class="right-label">Macro Indicators</div>
-        <div class="macro-item"><span class="macro-label">Fed Funds Rate</span><span class="macro-val">4.25–4.50%</span></div>
-        <div class="macro-item"><span class="macro-label">10Y Treasury</span><span class="macro-val up">4.31%</span></div>
-        <div class="macro-item"><span class="macro-label">CPI (YoY)</span><span class="macro-val down">2.8%</span></div>
-        <div class="macro-item"><span class="macro-label">VIX</span><span class="macro-val">18.4</span></div>
-        <div class="macro-item"><span class="macro-label">DXY</span><span class="macro-val down">103.2</span></div>
-        <div class="macro-item"><span class="macro-label">WTI Crude</span><span class="macro-val">$67.40</span></div>
+        <div class="macro-item"><span class="macro-label">Fed Funds Rate</span><span class="macro-val" id="macro-fed">—</span></div>
+        <div class="macro-item"><span class="macro-label">10Y Treasury</span><span class="macro-val" id="macro-t10y">—</span></div>
+        <div class="macro-item"><span class="macro-label">CPI (YoY)</span><span class="macro-val" id="macro-cpi">—</span></div>
+        <div class="macro-item"><span class="macro-label">VIX</span><span class="macro-val" id="macro-vix">—</span></div>
+        <div class="macro-item"><span class="macro-label">DXY</span><span class="macro-val" id="macro-dxy">—</span></div>
+        <div class="macro-item"><span class="macro-label">WTI Crude</span><span class="macro-val" id="macro-oil">—</span></div>
       </div>
       <div class="right-section">
         <div class="right-label">Ask a follow-up</div>
@@ -468,6 +505,36 @@ function formatMarketDataForPrompt(md) {
   const macro = md.macro || {};
   return `[LIVE DATA - USE EXACTLY]: ${md.ticker} Price $${q.price||md.price} MktCap ${v.marketCap||md.marketCap} PE ${v.pe||md.pe||'N/A'} FwdPE ${v.forwardPE||'N/A'} EPS ${v.eps||md.eps||'N/A'} Beta ${v.beta||md.beta||'N/A'} 52wH ${v.week52High||md.week52High||'N/A'} 52wL ${v.week52Low||md.week52Low||'N/A'} Rev ${f.revenue||md.revenue||'N/A'} RevGrowth ${f.revenueGrowth||'N/A'} GPM ${f.grossMargin||'N/A'} OPM ${f.operatingMargin||'N/A'} NPM ${f.profitMargin||'N/A'} FCF ${f.freeCashflow||'N/A'} Cash ${f.totalCash||'N/A'} Debt ${f.totalDebt||'N/A'} DE ${f.debtToEquity||'N/A'} ROE ${f.returnOnEquity||'N/A'} Target ${a.targetMean||'N/A'} Rating ${a.recommendation||'N/A'} RFR ${macro.riskFreeRatePct||'4.3%'}`;
 }
+
+// ── LIVE MACRO DATA ─────────────────────────────────────────────
+async function fetchMacroData() {
+  try {
+    const res = await fetch('https://djai.vercel.app/api/macro', { method: 'GET' });
+    if (!res.ok) return;
+    const json = await res.json();
+    if (!json.success || !json.data) return;
+    const d = json.data;
+    const set = (id, val, up) => {
+      const el = document.getElementById(id);
+      if (el && val) {
+        el.textContent = val;
+        el.className = 'macro-val' + (up === true ? ' up' : up === false ? ' down' : '');
+      }
+    };
+    set('macro-fed', d.fedFundsRate);
+    set('macro-t10y', d.treasury10y, d.treasury10yRaw > 4 ? true : false);
+    set('macro-cpi', d.cpiYoy, d.cpiYoyRaw > 3 ? false : true);
+    set('macro-vix', d.vix, d.vix > 20 ? false : true);
+    set('macro-dxy', d.dxy, null);
+    set('macro-oil', d.wtiCrude, null);
+  } catch(e) {
+    // Fail silently — keep dashes
+  }
+}
+
+// Fetch macro data on load and refresh every 5 minutes
+fetchMacroData();
+setInterval(fetchMacroData, 5 * 60 * 1000);
 
 let searchHistory = [];
 let currentQuery = '';
@@ -669,6 +736,81 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
   }
 }
 
+function buildConsensusBar(liveData) {
+  if (!liveData) return '';
+  const v = liveData.valuation || {};
+  const f = liveData.currentFinancials || {};
+  const a = liveData.analystData || {};
+  const q = liveData.quote || liveData;
+
+  // Signal: derive from recommendation
+  const rec = (a.recommendation || '').toLowerCase();
+  let signal = 'HOLD', signalClass = 'hold', signalPct = 50;
+  if (rec === 'buy' || rec === 'strong_buy' || rec === 'strongbuy') { signal = 'BUY'; signalClass = 'buy'; signalPct = 82; }
+  else if (rec === 'sell' || rec === 'strong_sell' || rec === 'underperform') { signal = 'SELL'; signalClass = 'sell'; signalPct = 18; }
+  else if (rec === 'overweight' || rec === 'outperform') { signal = 'BUY'; signalClass = 'buy'; signalPct = 72; }
+  else if (rec === 'underweight') { signal = 'SELL'; signalClass = 'sell'; signalPct = 28; }
+
+  // Valuation: compare price to analyst target
+  const price = Number(q.price || liveData.price || 0);
+  const target = Number(a.targetMean?.replace('$','') || v.targetMeanPrice?.replace('$','') || 0);
+  let valuation = 'FAIRLY VALUED', valClass = 'fair';
+  let upsidePct = 0;
+  if (price > 0 && target > 0) {
+    upsidePct = ((target - price) / price * 100);
+    if (upsidePct > 15) { valuation = 'UNDERVALUED'; valClass = 'under'; }
+    else if (upsidePct < -5) { valuation = 'OVERVALUED'; valClass = 'over'; }
+  }
+
+  // P/E vs sector gauge
+  const pe = parseFloat(v.pe || liveData.pe || 0);
+  const fwdPe = parseFloat(v.forwardPE || liveData.forwardPE || 0);
+  const numAnalysts = a.numberOfAnalysts || 0;
+  const targetHigh = a.targetHigh || '—';
+  const targetLow = a.targetLow || '—';
+
+  const signalBarColor = signalClass === 'buy' ? 'var(--green)' : signalClass === 'sell' ? 'var(--red)' : 'var(--amber)';
+  const valBarColor = valClass === 'under' ? 'var(--green)' : valClass === 'over' ? 'var(--red)' : 'var(--gold)';
+  const upsideColor = upsidePct > 0 ? 'var(--green)' : 'var(--red)';
+
+  return `
+    <div class="consensus-wrap">
+      <div class="consensus-title">Market Consensus & Signal</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Analyst Signal</div>
+          <span class="signal-badge \${signalClass}">\${signal}</span>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px">\${numAnalysts} analysts</div>
+        </div>
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Valuation</div>
+          <span class="val-badge \${valClass}">\${valuation}</span>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:\${upsideColor};margin-top:4px">\${upsidePct > 0 ? '+' : ''}\${upsidePct.toFixed(1)}% to target</div>
+        </div>
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Price Target</div>
+          <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--gold)">\${a.targetMean || '—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">Range \${targetLow} – \${targetHigh}</div>
+        </div>
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Multiples</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text)">P/E \${pe ? pe.toFixed(1) + 'x' : '—'} · Fwd \${fwdPe ? fwdPe.toFixed(1) + 'x' : '—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">ROE \${f.returnOnEquity || '—'} · FCF \${f.freeCashflow || '—'}</div>
+        </div>
+      </div>
+      <div class="consensus-row">
+        <span class="consensus-label">Signal</span>
+        <div class="signal-bar"><div class="signal-fill" style="width:\${signalPct}%;background:\${signalBarColor}"></div></div>
+        <span class="consensus-val" style="color:\${signalBarColor}">\${signal}</span>
+      </div>
+      <div class="consensus-row">
+        <span class="consensus-label">Valuation</span>
+        <div class="signal-bar"><div class="signal-fill" style="width:\${Math.min(100,Math.max(5, 50 + upsidePct))}%;background:\${valBarColor}"></div></div>
+        <span class="consensus-val" style="color:\${valBarColor}">\${valuation.split(' ')[0]}</span>
+      </div>
+    </div>`;
+}
+
 function renderResults(query, r) {
   const center = document.getElementById('results-container');
 
@@ -740,6 +882,7 @@ function renderResults(query, r) {
           <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/['"]/g,'')}')">◈ Valuation</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--blue);border-color:rgba(91,143,212,0.4)" onclick="openFinancialsPanel()">▤ Financials</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--green);border-color:rgba(76,175,125,0.4)" onclick="openFilingsPanel()">⬡ Filings</button>
+          <button class="val-trigger-btn" style="background:linear-gradient(135deg,rgba(201,168,76,0.15),rgba(91,143,212,0.1));color:var(--gold);border-color:rgba(201,168,76,0.4);font-weight:500" onclick="runQuickPitch('${(r.title||query).replace(/['"]/g,'')}')">⚡ Quick Pitch</button>
         </div>
       </div>
 
@@ -811,6 +954,7 @@ function renderError(query, detail) {
           <button class="val-trigger-btn" onclick="openValPanel('${query}')">◈ Valuation</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--blue);border-color:rgba(91,143,212,0.4)" onclick="openFinancialsPanel()">▤ Financials</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--green);border-color:rgba(76,175,125,0.4)" onclick="openFilingsPanel()">⬡ Filings</button>
+          <button class="val-trigger-btn" style="background:linear-gradient(135deg,rgba(201,168,76,0.15),rgba(91,143,212,0.1));color:var(--gold);border-color:rgba(201,168,76,0.4);font-weight:500" onclick="runQuickPitch('${(r.title||query).replace(/['"]/g,'')}')">⚡ Quick Pitch</button>
         </div>
       </div>
       <div class="card">
@@ -895,9 +1039,204 @@ function closeFilingsPanel() {
   document.body.style.overflow = '';
 }
 
+function closeQuickPitch() {
+  document.getElementById('qp-overlay').classList.remove('open');
+  document.getElementById('qp-panel').classList.remove('open');
+}
+
+async function runQuickPitch(title) {
+  document.getElementById('qp-ticker').textContent = currentQuery.toUpperCase() + ' — ' + title;
+  document.getElementById('qp-overlay').classList.add('open');
+  document.getElementById('qp-panel').classList.add('open');
+
+  const body = document.getElementById('qp-body');
+  const liveData = window._lastLiveData;
+
+  const stepNames = [
+    'Gathering intelligence & financials',
+    'Synthesizing market consensus',
+    'Building valuation model',
+    'Running QC review'
+  ];
+
+  function renderSteps(activeIdx) {
+    return '<div class="qp-progress">' +
+      '<div style="font-family:DM Mono,monospace;font-size:10px;color:var(--muted);margin-bottom:16px;text-transform:uppercase">Building pitch for ' + currentQuery.toUpperCase() + '...</div>' +
+      stepNames.map(function(s, i) {
+        var cls = i < activeIdx ? 'done' : i === activeIdx ? 'active' : '';
+        var icon = i < activeIdx ? '✓' : i === activeIdx ? '▶' : '○';
+        return '<div class="qp-step ' + cls + '" id="qp-step-' + i + '"><div class="qp-step-icon">' + icon + '</div><span>' + s + '</span></div>';
+      }).join('') +
+      '<div class="loading-bar" style="margin-top:16px;width:100%"><div class="loading-fill"></div></div>' +
+      '</div>';
+  }
+
+  body.innerHTML = renderSteps(0);
+
+  var q = (liveData && liveData.quote) ? liveData.quote : (liveData || {});
+  var v = (liveData && liveData.valuation) ? liveData.valuation : {};
+  var f = (liveData && liveData.currentFinancials) ? liveData.currentFinancials : {};
+  var a = (liveData && liveData.analystData) ? liveData.analystData : {};
+  var macro = (liveData && liveData.macro) ? liveData.macro : {};
+  var hist = (liveData && liveData.historicalFinancials) ? liveData.historicalFinancials : [];
+
+  var histStr = hist.slice(0,3).map(function(h) {
+    return h.year + ': Rev $' + (h.revenue ? (h.revenue/1e9).toFixed(1)+'B' : 'N/A') + ' NI $' + (h.netIncome ? (h.netIncome/1e9).toFixed(1)+'B' : 'N/A');
+  }).join(' | ');
+
+  var dataContext = liveData
+    ? 'LIVE DATA: ' + currentQuery + ' | Price $' + (q.price||liveData.price||'N/A') + ' | MktCap ' + (v.marketCap||liveData.marketCap||'N/A') + ' | PE ' + (v.pe||liveData.pe||'N/A') + ' | FwdPE ' + (v.forwardPE||'N/A') + ' | Revenue ' + (f.revenue||liveData.revenue||'N/A') + ' | GrossMargin ' + (f.grossMargin||'N/A') + ' | OpMargin ' + (f.operatingMargin||'N/A') + ' | FCF ' + (f.freeCashflow||'N/A') + ' | ROE ' + (f.returnOnEquity||'N/A') + ' | AnalystTarget ' + (a.targetMean||'N/A') + ' | Consensus ' + (a.recommendation||'N/A') + ' | ' + (a.numberOfAnalysts||0) + ' analysts | RFR ' + (macro.riskFreeRatePct||'4.3%') + (histStr ? ' | Historical: ' + histStr : '')
+    : 'No live data — use best knowledge.';
+
+  body.innerHTML = renderSteps(1);
+
+  var pitchPrompt = 'You are a senior equity research analyst. Generate a comprehensive quick pitch for ' + title + ' (' + currentQuery + ').\n\n' + dataContext + '\n\nReturn ONLY valid JSON (no markdown):\n{\n  "ticker": "' + currentQuery + '",\n  "company": "' + title.replace(/"/g,"'") + '",\n  "rating": "BUY|HOLD|SELL",\n  "targetPrice": 0.00,\n  "currentPrice": 0.00,\n  "upside": "+X.X%",\n  "thesis": "One sharp differentiated investment thesis sentence.",\n  "keyMetrics": {"revenue":"X.XB","revenueGrowth":"X.X%","grossMargin":"X.X%","operatingMargin":"X.X%","netMargin":"X.X%","fcf":"X.XB","pe":"X.Xx","forwardPe":"X.Xx","evEbitda":"X.Xx","roe":"X.X%","beta":"X.X"},\n  "dcf": {"wacc":0.00,"terminalGrowth":0.025,"impliedPrice":0.00},\n  "comps": [{"name":"Peer 1","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"},{"name":"Peer 2","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"},{"name":"Peer 3","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"}],\n  "bull": ["Point 1","Point 2","Point 3"],\n  "bear": ["Risk 1","Risk 2","Risk 3"],\n  "catalysts": ["Catalyst 1","Catalyst 2","Catalyst 3"],\n  "businessOverview": "2-3 sentences.",\n  "financialAnalysis": "2-3 sentences.",\n  "valSummary": "2-3 sentences.",\n  "risks": "2 sentences.",\n  "conclusion": "2 sentences."\n}';
+
+  try {
+    var res = await fetch('https://djai.vercel.app/api/proxy', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: 'claude-haiku-4-5-20251001', max_tokens: 2500, messages: [{role:'user',content:pitchPrompt}]})
+    });
+    var data = await res.json();
+    var rawText = (data.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('');
+    var s = rawText.indexOf('{'), e = rawText.lastIndexOf('}');
+    if (s === -1) throw new Error('No JSON in response — ' + rawText.slice(0,100));
+    var pitch = JSON.parse(rawText.slice(s, e+1));
+
+    body.innerHTML = renderSteps(2);
+
+    // QC call
+    var qcPrompt = 'Review this equity pitch for ' + currentQuery + '. Rating: ' + pitch.rating + ', Target: $' + pitch.targetPrice + ', Thesis: "' + pitch.thesis + '". Bull: ' + (pitch.bull||[]).join('; ') + '. Bear: ' + (pitch.bear||[]).join('; ') + '. Is the thesis differentiated? Return JSON only: {"thesis_score":1-10,"optimized_thesis":"sharper version","strongest_point":"...","flag":"concern or null"}';
+
+    body.innerHTML = renderSteps(3);
+    var qcRes = await fetch('https://djai.vercel.app/api/proxy', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{role:'user',content:qcPrompt}]})
+    });
+    var qcData = await qcRes.json();
+    var qc = {};
+    try {
+      var qt = (qcData.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('');
+      var qs = qt.indexOf('{'), qe = qt.lastIndexOf('}');
+      if (qs !== -1) qc = JSON.parse(qt.slice(qs, qe+1));
+    } catch(err) {}
+
+    if (qc.optimized_thesis && qc.thesis_score >= 7) pitch.thesis = qc.optimized_thesis;
+
+    // Render pitch
+    var ratingColor = pitch.rating === 'BUY' ? 'var(--green)' : pitch.rating === 'SELL' ? 'var(--red)' : 'var(--amber)';
+    var upsideNum = parseFloat(pitch.upside);
+    var upsideColor = upsideNum >= 0 ? 'var(--green)' : 'var(--red)';
+
+    var metricsHTML = [
+      ['Revenue', pitch.keyMetrics && pitch.keyMetrics.revenue],
+      ['Rev Growth', pitch.keyMetrics && pitch.keyMetrics.revenueGrowth],
+      ['Op Margin', pitch.keyMetrics && pitch.keyMetrics.operatingMargin],
+      ['FCF', pitch.keyMetrics && pitch.keyMetrics.fcf],
+      ['P/E', pitch.keyMetrics && pitch.keyMetrics.pe],
+      ['Fwd P/E', pitch.keyMetrics && pitch.keyMetrics.forwardPe],
+      ['EV/EBITDA', pitch.keyMetrics && pitch.keyMetrics.evEbitda],
+      ['ROE', pitch.keyMetrics && pitch.keyMetrics.roe]
+    ].map(function(m) {
+      return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:8px 10px">' +
+        '<div style="font-family:DM Mono,monospace;font-size:8px;color:var(--muted);text-transform:uppercase;margin-bottom:3px">' + m[0] + '</div>' +
+        '<div style="font-family:DM Mono,monospace;font-size:12px;color:var(--text)">' + (m[1]||'—') + '</div></div>';
+    }).join('');
+
+    var bullHTML = (pitch.bull||[]).map(function(b) {
+      return '<div style="font-size:11px;color:var(--muted2);padding:4px 0;border-bottom:1px solid var(--border)">› ' + b + '</div>';
+    }).join('');
+
+    var bearHTML = (pitch.bear||[]).map(function(b) {
+      return '<div style="font-size:11px;color:var(--muted2);padding:4px 0;border-bottom:1px solid var(--border)">› ' + b + '</div>';
+    }).join('');
+
+    var compsHTML = (pitch.comps||[]).map(function(c) {
+      var pColor = c.premium && c.premium.startsWith('-') ? 'var(--red)' : 'var(--green)';
+      return '<tr style="border-bottom:1px solid var(--border)">' +
+        '<td style="padding:5px 6px;color:var(--text)">' + c.name + ' <span style="color:var(--muted)">(' + c.ticker + ')</span></td>' +
+        '<td style="text-align:right;padding:5px 6px;color:var(--muted2)">' + c.evEbitda + '</td>' +
+        '<td style="text-align:right;padding:5px 6px;color:var(--muted2)">' + c.pe + '</td>' +
+        '<td style="text-align:right;padding:5px 6px;color:' + pColor + '">' + c.premium + '</td></tr>';
+    }).join('');
+
+    var catalystsHTML = (pitch.catalysts||[]).map(function(c, i) {
+      return '<div style="font-size:11px;color:var(--muted2);padding:5px 0;border-bottom:1px solid var(--border)">' + (i+1) + '. ' + c + '</div>';
+    }).join('');
+
+    var qcHTML = qc.thesis_score ? (
+      '<div style="background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.2);border-radius:10px;padding:14px">' +
+      '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--gold);text-transform:uppercase;margin-bottom:8px">QC Report · Thesis Score ' + qc.thesis_score + '/10</div>' +
+      '<div style="font-size:11px;color:var(--muted2);margin-bottom:6px"><strong style="color:var(--text)">Strongest point:</strong> ' + (qc.strongest_point||'—') + '</div>' +
+      (qc.flag && qc.flag !== 'null' ? '<div style="font-size:11px;color:var(--amber)">⚠ ' + qc.flag + '</div>' : '<div style="font-size:11px;color:var(--green)">✓ No material issues flagged</div>') +
+      '</div>'
+    ) : '';
+
+    var qcFlagHTML = (qc.flag && qc.flag !== 'null') ?
+      '<div style="margin-top:8px;font-family:DM Mono,monospace;font-size:10px;color:var(--amber);padding:6px 10px;background:rgba(224,155,60,0.08);border-radius:6px">⚠ QC: ' + qc.flag + '</div>' : '';
+
+    body.innerHTML =
+      '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">' +
+          '<div>' +
+            '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Investment Thesis</div>' +
+            '<div style="font-family:Playfair Display,serif;font-size:14px;color:var(--text);line-height:1.5;max-width:500px">' + pitch.thesis + '</div>' +
+          '</div>' +
+          '<div style="text-align:right;flex-shrink:0">' +
+            '<div style="font-size:22px;font-weight:600;color:' + ratingColor + ';font-family:Playfair Display,serif">' + pitch.rating + '</div>' +
+            '<div style="font-family:DM Mono,monospace;font-size:11px;color:var(--gold)">Target $' + pitch.targetPrice + '</div>' +
+            '<div style="font-family:DM Mono,monospace;font-size:11px;color:' + upsideColor + '">' + pitch.upside + ' upside</div>' +
+          '</div>' +
+        '</div>' + qcFlagHTML +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">' + metricsHTML + '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
+        '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">' +
+          '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--green);text-transform:uppercase;margin-bottom:8px">Bull Case</div>' + bullHTML + '</div>' +
+        '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">' +
+          '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--red);text-transform:uppercase;margin-bottom:8px">Bear Case</div>' + bearHTML + '</div>' +
+      '</div>' +
+      '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">' +
+        '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">Comparable Companies</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:11px;font-family:DM Mono,monospace">' +
+          '<thead><tr style="border-bottom:1px solid var(--border2)">' +
+            '<th style="text-align:left;padding:4px 6px;color:var(--muted);font-weight:400">Company</th>' +
+            '<th style="text-align:right;padding:4px 6px;color:var(--muted);font-weight:400">EV/EBITDA</th>' +
+            '<th style="text-align:right;padding:4px 6px;color:var(--muted);font-weight:400">P/E</th>' +
+            '<th style="text-align:right;padding:4px 6px;color:var(--muted);font-weight:400">Prem/Disc</th>' +
+          '</tr></thead><tbody>' + compsHTML +
+          '<tr style="border-top:2px solid var(--border2)">' +
+            '<td style="padding:5px 6px;color:var(--gold)">' + pitch.ticker + ' (Subject)</td>' +
+            '<td style="text-align:right;padding:5px 6px;color:var(--gold)">' + (pitch.keyMetrics&&pitch.keyMetrics.evEbitda||'—') + '</td>' +
+            '<td style="text-align:right;padding:5px 6px;color:var(--gold)">' + (pitch.keyMetrics&&pitch.keyMetrics.pe||'—') + '</td>' +
+            '<td style="text-align:right;padding:5px 6px;color:var(--gold)">—</td>' +
+          '</tr></tbody></table>' +
+      '</div>' +
+      '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">' +
+        '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">Analysis</div>' +
+        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Business:</strong> ' + (pitch.businessOverview||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Financials:</strong> ' + (pitch.financialAnalysis||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Valuation:</strong> ' + (pitch.valSummary||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Risks:</strong> ' + (pitch.risks||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--text);padding-top:8px;border-top:1px solid var(--border)">' + (pitch.conclusion||'—') + '</div>' +
+      '</div>' +
+      '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">' +
+        '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Key Catalysts</div>' + catalystsHTML +
+      '</div>' + qcHTML;
+
+  } catch(e) {
+    body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Error building pitch: ' + e.message + '<div style="margin-top:8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted)">Try again in 60s if this is a rate limit error.</div></div>';
+  }
+}
+
 function openValPanel(title) {
   document.getElementById('val-panel-title').textContent = title;
   document.getElementById('val-panel-ticker').textContent = currentQuery.toUpperCase();
+  activeValTab = 'gauges'; // Always reset to ratings tab on open
+  // Reset only val-panel tabs, not fin/fil panels
+  document.querySelectorAll('#val-panel .val-tab').forEach((t,i) => t.classList.toggle('active', i===0));
   document.getElementById('val-overlay').classList.add('open');
   document.getElementById('val-panel').classList.add('open');
   document.getElementById('val-body').innerHTML = `
@@ -919,7 +1258,7 @@ function closeValPanel() {
 
 function switchValTab(tab, el) {
   activeValTab = tab;
-  document.querySelectorAll('.val-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#val-panel .val-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
   if (valData && valData.query === currentQuery) renderValTab(tab);
 }
@@ -931,7 +1270,30 @@ async function loadFinancials(bodyId = 'fin-body') {
   const cf = liveData?.currentFinancials || {};
 
   if (!av.length) {
-    body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Financial statement data unavailable for this ticker.</div>';
+    // Try to show what we have from current financials
+    const cf = liveData?.currentFinancials || {};
+    if (Object.keys(cf).length > 0) {
+      body.innerHTML = `<div style="padding:16px">
+        <div class="val-section-title" style="margin-bottom:12px">Current Financials (TTM)</div>
+        <table class="fin-table">
+          <tbody>
+            <tr><td>Revenue</td><td>${cf.revenue || '—'}</td></tr>
+            <tr><td>Gross Margin</td><td>${cf.grossMargin || '—'}</td></tr>
+            <tr><td>Operating Margin</td><td>${cf.operatingMargin || '—'}</td></tr>
+            <tr class="total"><td>Net Margin</td><td>${cf.profitMargin || '—'}</td></tr>
+            <tr><td>Free Cash Flow</td><td>${cf.freeCashflow || '—'}</td></tr>
+            <tr><td>ROE</td><td>${cf.returnOnEquity || '—'}</td></tr>
+            <tr><td>Total Cash</td><td>${cf.totalCash || '—'}</td></tr>
+            <tr><td>Total Debt</td><td>${cf.totalDebt || '—'}</td></tr>
+          </tbody>
+        </table>
+        <div style="font-size:10px;color:var(--muted);margin-top:12px;font-family:'DM Mono',monospace">
+          Historical data requires Alpha Vantage — may be unavailable for this ticker
+        </div>
+      </div>`;
+    } else {
+      body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Financial data unavailable for this ticker.</div>';
+    }
     return;
   }
 
@@ -1017,7 +1379,12 @@ async function loadFilings(bodyId = 'fil-body') {
           </div>`).join('')}
       </div>`;
   } catch(e) {
-    body.innerHTML = `<div style="padding:24px;color:var(--muted2);font-size:12px">Error loading filings: ${e.message}</div>`;
+    body.innerHTML = `<div style="padding:24px;color:var(--muted2);font-size:12px">
+      <div style="margin-bottom:8px;color:var(--text)">Could not load SEC filings</div>
+      ${e.message}<br><br>
+      <a href="https://www.sec.gov/cgi-bin/browse-edgar?company=${encodeURIComponent(currentQuery)}&CIK=&type=10-K&dateb=&owner=include&count=40&search_text=&action=getcompany" 
+         target="_blank" style="color:var(--gold)">Search SEC EDGAR directly ↗</a>
+    </div>`;
   }
 }
 
@@ -1191,7 +1558,8 @@ Return ONLY this JSON (no markdown):
 
     // Run sequentially to stay within 50 RPM limit
     // Part 1: Ratings + Write-up
-    const part1 = await callClaude(prompt1, 2000).catch(e => { throw e; });
+    const part1 = await callClaude(prompt1, 2000);
+    if (!part1 || !part1.ratings) throw new Error('Invalid ratings response');
     valData = { ...part1 };
     valData.query = currentQuery;
 
@@ -1201,7 +1569,7 @@ Return ONLY this JSON (no markdown):
     // Part 2: DCF + Comps (sequential, after part1)
     try {
       const part2 = await callClaude(prompt2, 2500);
-      if (part2 && valData.query === currentQuery) {
+      if (part2 && part2.dcf && valData.query === currentQuery) {
         valData.dcf = part2.dcf;
         valData.comps = part2.comps;
 
@@ -1509,6 +1877,19 @@ document.addEventListener('keydown', e => {
 
 <!-- VALUATION PANEL -->
 <div class="val-overlay" id="val-overlay" onclick="closeValPanel()"></div>
+<div class="val-overlay" id="qp-overlay" onclick="closeQuickPitch()"></div>
+<div class="qp-panel" id="qp-panel" onclick="event.stopPropagation()">
+  <div class="qp-topbar">
+    <div>
+      <div class="qp-title">⚡ Quick Pitch</div>
+      <div class="qp-sub" id="qp-ticker"></div>
+    </div>
+    <button class="val-close" onclick="closeQuickPitch()">×</button>
+  </div>
+  <div class="qp-body" id="qp-body">
+    <div style="padding:40px;text-align:center;color:var(--muted);font-family:'DM Mono',monospace;font-size:11px">Ready to build pitch...</div>
+  </div>
+</div>
 <div class="val-overlay" id="fin-overlay" onclick="closeFinancialsPanel()"></div>
 <div class="val-overlay" id="fil-overlay" onclick="closeFilingsPanel()"></div>
 
