@@ -60,7 +60,7 @@ module.exports = async function handler(req, res) {
 
     // CPI and Fed Funds Rate - use FRED API (server-side works fine)
     let cpiYoy = null;
-    let fedFunds = '4.25–4.50%'; // Keep as known current value if FRED fails
+    let fedFunds = '3.50–3.75'; // Keep as known current value if FRED fails
 
     try {
       const fredCpiRes = await fetch(
