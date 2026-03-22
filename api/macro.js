@@ -88,8 +88,8 @@ module.exports = async function handler(req, res) {
 
     const macro = {
       // Fed Funds - hardcoded current FOMC rate (changes rarely, well known)
-      fedFundsRate: '4.25–4.50%',
-      fedFundsRaw: 4.375,
+      fedFundsRate: '3.50–3.75%',
+      fedFundsRaw: 3.675,
 
       // 10Y Treasury from Yahoo Finance (^TNX) - already in % format
       treasury10y: t10y.price ? t10y.price.toFixed(2) + '%' : null,
@@ -125,7 +125,7 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({
       success: true,
       data: {
-        fedFundsRate: '4.25–4.50%',
+        fedFundsRate: '3.50–3.75%',
         treasury10y: null, cpiYoy: null,
         vix: null, dxy: null, wtiCrude: null,
         timestamp: new Date().toISOString()
