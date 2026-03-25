@@ -496,12 +496,18 @@ async function fetchMarketData(query) {
 
 function formatMarketDataForPrompt(md) {
   if (!md) return '';
-  const q = md.quote || md;
+  const q = md.quote || {};
   const v = md.valuation || {};
   const f = md.currentFinancials || {};
   const a = md.analystData || {};
   const macro = md.macro || {};
-  return `[LIVE DATA - USE EXACTLY]: ${md.ticker} Price $${q.price||md.price} MktCap ${v.marketCap||md.marketCap} PE ${v.pe||md.pe||'N/A'} FwdPE ${v.forwardPE||'N/A'} EPS ${v.eps||md.eps||'N/A'} Beta ${v.beta||md.beta||'N/A'} 52wH ${v.week52High||md.week52High||'N/A'} 52wL ${v.week52Low||md.week52Low||'N/A'} Rev ${f.revenue||md.revenue||'N/A'} RevGrowth ${f.revenueGrowth||'N/A'} GPM ${f.grossMargin||'N/A'} OPM ${f.operatingMargin||'N/A'} NPM ${f.profitMargin||'N/A'} FCF ${f.freeCashflow||'N/A'} Cash ${f.totalCash||'N/A'} Debt ${f.totalDebt||'N/A'} DE ${f.debtToEquity||'N/A'} ROE ${f.returnOnEquity||'N/A'} Target ${a.targetMean||'N/A'} Rating ${a.recommendation||'N/A'} RFR ${macro.riskFreeRatePct||'4.3%'}`;
+  // Safe formatter — never lets undefined/null leak into the prompt string
+  const n = (val) => (val != null && val !== '' && String(val) !== 'undefined') ? val : 'N/A';
+  const price = q.price != null ? '$' + q.price : (md.price != null ? '$' + md.price : 'N/A');
+  // If there is no price and no market cap, the data object carries nothing useful
+  const hasUsefulData = price !== 'N/A' || n(v.marketCap || md.marketCap) !== 'N/A';
+  if (!hasUsefulData) return '';
+  return `[LIVE MARKET DATA — use exact values where shown; substitute your knowledge for any N/A]: ${n(md.ticker)} Price ${price} MktCap ${n(v.marketCap||md.marketCap)} PE ${n(v.pe||md.pe)} FwdPE ${n(v.forwardPE)} EPS ${n(v.eps||md.eps)} Beta ${n(v.beta||md.beta)} 52wH ${n(v.week52High||md.week52High)} 52wL ${n(v.week52Low||md.week52Low)} Rev ${n(f.revenue||md.revenue)} RevGrowth ${n(f.revenueGrowth)} GPM ${n(f.grossMargin)} OPM ${n(f.operatingMargin)} NPM ${n(f.profitMargin)} FCF ${n(f.freeCashflow)} Cash ${n(f.totalCash)} Debt ${n(f.totalDebt)} DE ${n(f.debtToEquity)} ROE ${n(f.returnOnEquity)} Target ${n(a.targetMean)} Rating ${n(a.recommendation)} RFR ${n(macro.riskFreeRatePct) !== 'N/A' ? macro.riskFreeRatePct : '4.3%'}`;
 }
 
 // ── LIVE MACRO DATA ─────────────────────────────────────────────
@@ -616,9 +622,9 @@ async function runSearch() {
 
   const systemPrompt = `You are DJAI, an elite financial intelligence engine — Bloomberg Terminal meets elite sell-side analyst.
 
-CRITICAL RULE: If the user message contains a section labeled "LIVE MARKET DATA", you MUST use those exact figures for ALL price, market cap, P/E, revenue, and financial metrics in your JSON response. Do not substitute, round, or replace any live data figure with your own training knowledge. The live data is always more accurate than your training data.
+LIVE DATA RULE: If the user message contains a section labeled "LIVE MARKET DATA", use those exact figures in your JSON where they are real values. Any field showing "N/A" means live data was unavailable — fill those fields using your own knowledge. Never output the literal string "N/A" or "undefined" in your JSON response.
 
-${liveDataStr ? 'Live market data has been provided for this query. Use it exactly as given.' : 'No live market data available — use your best knowledge.'}
+${liveDataStr ? 'Live market data has been provided for this query. Use exact values where given; fill gaps with your knowledge.' : 'No live market data available — use your best knowledge for all figures.'}
 
 When given a search query, return a JSON object with this exact structure:
 {
