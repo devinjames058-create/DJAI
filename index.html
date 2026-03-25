@@ -335,6 +335,11 @@ body::before {
 .val-section { margin-bottom:24px; }
 .val-section-title { font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.14em; color:var(--muted); margin-bottom:12px; }
 
+/* PANEL HEADER — used by fin-panel and fil-panel */
+.val-panel-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; border-bottom:1px solid var(--border); flex-shrink:0; background:var(--surface2); }
+.val-panel-title { font-family:'Playfair Display',serif; font-size:16px; color:var(--gold); font-weight:500; }
+.val-panel-sub { font-family:'DM Mono',monospace; font-size:10px; color:var(--muted); letter-spacing:0.12em; margin-top:2px; }
+
 /* GAUGES */
 .gauges-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }
 .gauge-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:16px; text-align:center; }
@@ -514,15 +519,18 @@ function formatMarketDataForPrompt(md) {
 
 // ── LIVE MACRO DATA ─────────────────────────────────────────────
 async function fetchMacroData() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    const res = await fetch('https://djai.vercel.app/api/macro', { method: 'GET' });
+    const res = await fetch('https://djai.vercel.app/api/macro', { method: 'GET', signal: controller.signal });
+    clearTimeout(timeout);
     if (!res.ok) return;
     const json = await res.json();
     if (!json.success || !json.data) return;
     const d = json.data;
     const set = (id, val, up) => {
       const el = document.getElementById(id);
-      if (el && val) {
+      if (el && val != null) {
         el.textContent = val;
         el.className = 'macro-val' + (up === true ? ' up' : up === false ? ' down' : '');
       }
@@ -530,10 +538,11 @@ async function fetchMacroData() {
     set('macro-fed', d.fedFundsRate);
     set('macro-t10y', d.treasury10y, d.treasury10yRaw > 4 ? true : false);
     set('macro-cpi', d.cpiYoy, d.cpiYoyRaw > 3 ? false : true);
-    set('macro-vix', d.vix, d.vix > 20 ? false : true);
+    set('macro-vix', d.vix, (d.vixRaw ?? d.vix) > 20 ? false : true); // use numeric raw value
     set('macro-dxy', d.dxy, null);
     set('macro-oil', d.wtiCrude, null);
   } catch(e) {
+    clearTimeout(timeout);
     // Fail silently — keep dashes
   }
 }
@@ -667,19 +676,24 @@ You MUST return ALL of these sections in your JSON — do not skip any:
 
 Return valid JSON only. No markdown. No explanation. No truncation.`;
 
+  const searchCtrl = new AbortController();
+  const searchTimer = setTimeout(() => searchCtrl.abort(), 35000);
   try {
     const res = await fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: searchCtrl.signal,
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 4000,
+        useSearch: true,
         messages: [
           { role: 'user', content: `Search query: "${query}"\nDate: ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}\n\n${liveDataStr || 'Note: Live market data unavailable for this ticker. Use your best knowledge for current figures.'}\n\nReturn the JSON analysis object. Keep all text fields under 2 sentences. Complete the full JSON.` }
         ],
         system: systemPrompt
       })
     });
+    clearTimeout(searchTimer);
 
     const data = await res.json();
 
@@ -736,7 +750,9 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
     renderResults(query, result);
 
   } catch(e) {
-    renderError(query, e.message);
+    clearTimeout(searchTimer);
+    const msg = e.name === 'AbortError' ? 'Search timed out — try again.' : e.message;
+    renderError(query, msg);
   } finally {
     btn.disabled = false; btn.textContent = 'Search';
   }
@@ -818,6 +834,7 @@ function buildConsensusBar(liveData) {
 }
 
 function renderResults(query, r) {
+  try {
   const center = document.getElementById('results-container');
 
   // Real news from live data pipeline
@@ -949,6 +966,9 @@ function renderResults(query, r) {
         <div class="card-body">${risksHTML}</div>
       </div>` : ''}
     </div>`;
+  } catch(e) {
+    renderError(query, 'Render error: ' + e.message);
+  }
 }
 
 function renderError(query, detail) {
@@ -985,10 +1005,13 @@ async function askFollowUp() {
   resultEl.textContent = 'Thinking...';
   resultEl.style.color = 'var(--muted)';
 
+  const fupCtrl = new AbortController();
+  const fupTimer = setTimeout(() => fupCtrl.abort(), 30000);
   try {
     const res = await fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: fupCtrl.signal,
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 600,
@@ -999,6 +1022,7 @@ async function askFollowUp() {
         system: 'You are DJAI, an elite financial intelligence engine. Answer follow-up questions concisely, precisely, and with institutional-grade insight. No fluff.'
       })
     });
+    clearTimeout(fupTimer);
     const data = await res.json();
     let text = (data.content || [])
       .filter(b => b.type === 'text' && b.text && b.text.trim().length > 5)
@@ -1009,7 +1033,8 @@ async function askFollowUp() {
     resultEl.style.color = 'var(--muted2)';
     document.getElementById('ask-input').value = '';
   } catch(e) {
-    resultEl.textContent = 'Error: ' + e.message;
+    clearTimeout(fupTimer);
+    resultEl.textContent = e.name === 'AbortError' ? 'Request timed out.' : 'Error: ' + e.message;
     resultEl.style.color = 'var(--red)';
   }
 }
@@ -1370,12 +1395,16 @@ async function loadFinancials(bodyId = 'fin-body') {
 
 async function loadFilings(bodyId = 'fil-body') {
   const body = document.getElementById(bodyId);
+  const filCtrl = new AbortController();
+  const filTimer = setTimeout(() => filCtrl.abort(), 20000);
   try {
     const res = await fetch('https://djai.vercel.app/api/filings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: filCtrl.signal,
       body: JSON.stringify({ ticker: currentQuery.toUpperCase() })
     });
+    clearTimeout(filTimer);
     const data = await res.json();
     if (!data.success || !data.filings?.length) {
       body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">No SEC filings found for this ticker.</div>';
@@ -1397,10 +1426,12 @@ async function loadFilings(bodyId = 'fil-body') {
           </div>`).join('')}
       </div>`;
   } catch(e) {
+    clearTimeout(filTimer);
+    const msg = e.name === 'AbortError' ? 'SEC EDGAR request timed out.' : e.message;
     body.innerHTML = `<div style="padding:24px;color:var(--muted2);font-size:12px">
       <div style="margin-bottom:8px;color:var(--text)">Could not load SEC filings</div>
-      ${e.message}<br><br>
-      <a href="https://www.sec.gov/cgi-bin/browse-edgar?company=${encodeURIComponent(currentQuery)}&CIK=&type=10-K&dateb=&owner=include&count=40&search_text=&action=getcompany" 
+      ${msg}<br><br>
+      <a href="https://www.sec.gov/cgi-bin/browse-edgar?company=${encodeURIComponent(currentQuery)}&CIK=&type=20-F,10-K&dateb=&owner=include&count=40&search_text=&action=getcompany"
          target="_blank" style="color:var(--gold)">Search SEC EDGAR directly ↗</a>
     </div>`;
   }
@@ -1451,18 +1482,21 @@ function reconcileValuationLogic(vd) {
 }
 
 async function fetchValuation(title) {
-  // Fetch fresh live data for valuation too
-  const liveValData = await fetchMarketData(currentQuery);
+  // Reuse live data already fetched by runSearch — only re-fetch if missing
+  const liveValData = window._lastLiveData || await fetchMarketData(currentQuery);
   const liveValStr = formatMarketDataForPrompt(liveValData);
 
   // Create compact version of live data for valuation prompts
+  // Uses same null-safe pattern as formatMarketDataForPrompt to prevent 'undefined' reaching Claude
   const compactLiveStr = liveValData ? (() => {
-    const q = liveValData.quote || liveValData;
+    const q = liveValData.quote || {};
     const v = liveValData.valuation || {};
     const f = liveValData.currentFinancials || {};
     const a = liveValData.analystData || {};
     const m = liveValData.macro || {};
-    return `KEY DATA: Price $${q.price||liveValData.price}, MktCap ${v.marketCap||liveValData.marketCap}, P/E ${v.pe||liveValData.pe}, FwdPE ${v.forwardPE}, EPS ${v.eps}, Beta ${v.beta}, Revenue ${f.revenue||liveValData.revenue}, GrossMargin ${f.grossMargin}, OpMargin ${f.operatingMargin}, ProfitMargin ${f.profitMargin}, FCF ${f.freeCashflow}, ROE ${f.returnOnEquity}, RevGrowth ${f.revenueGrowth}, EarnGrowth ${f.earningsGrowth}, TotalDebt ${f.totalDebt}, Cash ${f.totalCash}, AnalystTarget ${a.targetMean}, Consensus ${a.recommendation}, WACC_RFR ${m.riskFreeRatePct}`;
+    const nv = (val) => (val != null && String(val) !== 'undefined') ? val : 'N/A';
+    const price = q.price != null ? '$' + q.price : 'N/A';
+    return `KEY DATA: Price ${price}, MktCap ${nv(v.marketCap)}, P/E ${nv(v.pe)}, FwdPE ${nv(v.forwardPE)}, EPS ${nv(v.eps)}, Beta ${nv(v.beta)}, Revenue ${nv(f.revenue)}, GrossMargin ${nv(f.grossMargin)}, OpMargin ${nv(f.operatingMargin)}, ProfitMargin ${nv(f.profitMargin)}, FCF ${nv(f.freeCashflow)}, ROE ${nv(f.returnOnEquity)}, RevGrowth ${nv(f.revenueGrowth)}, EarnGrowth ${nv(f.earningsGrowth)}, TotalDebt ${nv(f.totalDebt)}, Cash ${nv(f.totalCash)}, AnalystTarget ${nv(a.targetMean)}, Consensus ${nv(a.recommendation)}, WACC_RFR ${nv(m.riskFreeRatePct) !== 'N/A' ? m.riskFreeRatePct : '4.3%'}`;
   })() : '';
 
   // SPLIT into two focused prompts to avoid timeout
@@ -1785,6 +1819,9 @@ function renderDCF() {
     </div>`;
 }
 
+
+// DCF inputs use inline onchange="recalcDCF()" — no additional DOM setup required
+function setupDCFInputs() {}
 
 let _dcfDebounce = null;
 function recalcDCF() {

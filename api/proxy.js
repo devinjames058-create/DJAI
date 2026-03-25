@@ -11,13 +11,14 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    // Add web_search tool to every request so Claude gets live data
-    const payload = {
-      ...body,
-      tools: [
-        { type: 'web_search_20250305', name: 'web_search' }
-      ]
-    };
+    // Strip internal flag before forwarding to Anthropic
+    const { useSearch, ...cleanBody } = body || {};
+
+    // Only add web_search tool when the caller explicitly requests it
+    // (search queries only — not valuation, QC, DCF, or follow-up calls)
+    const payload = useSearch
+      ? { ...cleanBody, tools: [{ type: 'web_search_20250305', name: 'web_search' }] }
+      : cleanBody;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
