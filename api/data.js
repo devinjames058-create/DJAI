@@ -67,6 +67,7 @@ module.exports = async function handler(req, res) {
   const p = yfPrice?.quoteSummary?.result?.[0]?.price || {};
   const s = yfStats?.quoteSummary?.result?.[0]?.summaryDetail || {};
   const ks = yfStats?.quoteSummary?.result?.[0]?.defaultKeyStatistics || {};
+  const ce = yfStats?.quoteSummary?.result?.[0]?.calendarEvents || {};
   const f = yfFinancial?.quoteSummary?.result?.[0]?.financialData || {};
 
   // ── Extract Alpha Vantage — Annual Financials (last 4 years) ─────
@@ -211,6 +212,34 @@ module.exports = async function handler(req, res) {
       riskFreeRatePct: riskFreeRate ? (riskFreeRate * 100).toFixed(2) + '%' : null,
       riskFreeRateSource: '10Y US Treasury (FRED)'
     },
+
+    // CALENDAR — Earnings dates from Yahoo Finance calendarEvents
+    calendar: (() => {
+      try {
+        const earningsDates = ce.earnings?.earningsDate || [];
+        // Find the next upcoming earnings date (raw is epoch seconds)
+        const nextEntry = earningsDates.find(d => d.raw != null && d.raw * 1000 > Date.now());
+        const nextFmt = nextEntry?.fmt ?? null;
+        const daysAway = nextEntry ? Math.round((nextEntry.raw * 1000 - Date.now()) / 86400000) : null;
+        // Fallback estimate: LatestQuarter + ~91 days when Yahoo doesn't return a forward date
+        const latestQ = avOverview?.LatestQuarter ?? null;
+        const estimatedNext = (!nextFmt && latestQ) ? (() => {
+          const d = new Date(latestQ); d.setDate(d.getDate() + 91);
+          return d.toISOString().split('T')[0];
+        })() : null;
+        const estDaysAway = (!nextFmt && estimatedNext)
+          ? Math.round((new Date(estimatedNext) - Date.now()) / 86400000) : null;
+        return {
+          nextEarningsDate: nextFmt,
+          nextEarningsDaysAway: daysAway ?? estDaysAway,
+          nextEarningsDateEstimated: !nextFmt && !!estimatedNext,
+          nextEarningsDateEstimate: estimatedNext,
+          latestQuarter: latestQ
+        };
+      } catch(e) {
+        return { nextEarningsDate: null, nextEarningsDaysAway: null, latestQuarter: null };
+      }
+    })(),
 
     // REAL NEWS — Yahoo Finance with links
     news: (() => {

@@ -298,6 +298,19 @@ body::before {
 .filing-link { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--gold); text-decoration: none; padding: 4px 10px; border: 1px solid rgba(201,168,76,0.3); border-radius: 5px; }
 .filing-link:hover { background: var(--gold3); }
 
+/* SESSION 2 — ENTITY / QUALITY / EARNINGS BADGES */
+.result-tag { font-family:'DM Mono',monospace; font-size:9px; padding:2px 6px; border-radius:3px; letter-spacing:0.09em; text-transform:uppercase; display:inline-block; margin-left:6px; }
+.result-tag.equity { background:rgba(201,168,76,0.1); color:var(--gold); }
+.result-tag.adr { background:rgba(91,143,212,0.12); color:var(--blue); }
+.result-tag.foreign { background:rgba(76,175,125,0.1); color:var(--teal); }
+.result-tag.theme,.result-tag.general { background:var(--surface3); color:var(--muted2); }
+.quality-badge { font-family:'DM Mono',monospace; font-size:9px; padding:2px 6px; border-radius:3px; letter-spacing:0.09em; text-transform:uppercase; display:inline-block; margin-left:6px; }
+.quality-badge.high { background:rgba(76,175,125,0.1); color:var(--green); }
+.quality-badge.med { background:rgba(224,155,60,0.1); color:var(--amber); }
+.quality-badge.low { background:rgba(224,92,92,0.1); color:var(--red); }
+.earnings-badge { font-family:'DM Mono',monospace; font-size:9px; padding:2px 8px; border-radius:3px; letter-spacing:0.09em; text-transform:uppercase; display:inline-block; margin-left:6px; background:rgba(224,155,60,0.15); color:var(--amber); border:1px solid rgba(224,155,60,0.3); animation:earningsPulse 2s ease-in-out infinite; }
+@keyframes earningsPulse { 0%,100%{opacity:1} 50%{opacity:0.55} }
+
 /* TOAST */
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface3); border: 1px solid var(--border2); border-radius: 8px; padding: 9px 18px; font-size: 12px; color: var(--text); z-index: 999; opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap; }
 .toast.show { opacity: 1; }
@@ -555,6 +568,7 @@ let searchHistory = [];
 let currentQuery = '';
 let lastResultContext = '';
 let lastLiveDataAvailable = false;
+let searchContextHistory = []; // Last 3 completed searches: {query, ticker, type, context}
 let _claudeRequestQueue = Promise.resolve(); // Serializes all Claude calls
 
 // Wrap every Claude call through the queue to prevent parallel requests
@@ -629,7 +643,21 @@ async function runSearch() {
   const liveData = await fetchMarketData(query);
   lastLiveDataAvailable = !!liveData;
   window._lastLiveData = liveData; // Store globally for renderResults access
+  window._entityType = detectEntityType(query, liveData, null); // Preliminary; AI type unknown yet
   const liveDataStr = formatMarketDataForPrompt(liveData);
+
+  // Pre-earnings context — inject if earnings within 21 days
+  const cal = liveData?.calendar;
+  const earningsDays = cal?.nextEarningsDaysAway;
+  const earningsDateStr = cal?.nextEarningsDate || cal?.nextEarningsDateEstimate || '';
+  const preEarningsStr = (earningsDays != null && earningsDays >= 0 && earningsDays <= 21)
+    ? `\n\n⚠️ PRE-EARNINGS ALERT: Earnings in ${earningsDays} day${earningsDays !== 1 ? 's' : ''} (${earningsDateStr}${cal?.nextEarningsDateEstimated ? ', estimated' : ''}). Prioritize: consensus EPS estimate, beat/miss probability, key line items to watch, and guidance expectations. Add an earnings-preview section to the thesis.`
+    : '';
+
+  // Cross-search context — brief session history for the AI
+  const priorCtx = searchContextHistory.length
+    ? `\n\nSession context (recent searches): ${searchContextHistory.slice(0, 3).map(s => `${s.ticker || s.query} (${s.type})`).join(', ')}. Reference only if directly relevant to this query.`
+    : '';
 
   const systemPrompt = `You are DJAI, an elite financial intelligence engine — Bloomberg Terminal meets elite sell-side analyst.
 
@@ -688,7 +716,7 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
         max_tokens: 4000,
         useSearch: true,
         messages: [
-          { role: 'user', content: `Search query: "${query}"\nDate: ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}\n\n${liveDataStr || 'Note: Live market data unavailable for this ticker. Use your best knowledge for current figures.'}\n\nReturn the JSON analysis object. Keep all text fields under 2 sentences. Complete the full JSON.` }
+          { role: 'user', content: `Search query: "${query}"\nDate: ${new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}\n\n${liveDataStr || 'Note: Live market data unavailable for this ticker. Use your best knowledge for current figures.'}${preEarningsStr}${priorCtx}\n\nReturn the JSON analysis object. Keep all text fields under 2 sentences. Complete the full JSON.` }
         ],
         system: systemPrompt
       })
@@ -747,7 +775,13 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
     }
 
     lastResultContext = result.context || '';
+    // Update entity type now that we have the AI-confirmed type
+    window._entityType = detectEntityType(query, liveData, result.type);
     renderResults(query, result);
+    // Push to cross-search context history (most recent first)
+    const _et = window._entityType;
+    searchContextHistory.unshift({ query, ticker: _et.ticker, type: _et.type, context: lastResultContext.slice(0, 300) });
+    if (searchContextHistory.length > 3) searchContextHistory.pop();
 
   } catch(e) {
     clearTimeout(searchTimer);
@@ -801,36 +835,70 @@ function buildConsensusBar(liveData) {
       <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
         <div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Analyst Signal</div>
-          <span class="signal-badge \${signalClass}">\${signal}</span>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px">\${numAnalysts} analysts</div>
+          <span class="signal-badge ${signalClass}">${signal}</span>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px">${numAnalysts} analysts</div>
         </div>
         <div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Valuation</div>
-          <span class="val-badge \${valClass}">\${valuation}</span>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:\${upsideColor};margin-top:4px">\${upsidePct > 0 ? '+' : ''}\${upsidePct.toFixed(1)}% to target</div>
+          <span class="val-badge ${valClass}">${valuation}</span>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:${upsideColor};margin-top:4px">${upsidePct > 0 ? '+' : ''}${upsidePct.toFixed(1)}% to target</div>
         </div>
         <div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Price Target</div>
-          <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--gold)">\${a.targetMean || '—'}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">Range \${targetLow} – \${targetHigh}</div>
+          <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--gold)">${a.targetMean || '—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">Range ${targetLow} – ${targetHigh}</div>
         </div>
         <div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Multiples</div>
-          <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text)">P/E \${pe ? pe.toFixed(1) + 'x' : '—'} · Fwd \${fwdPe ? fwdPe.toFixed(1) + 'x' : '—'}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">ROE \${f.returnOnEquity || '—'} · FCF \${f.freeCashflow || '—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text)">P/E ${pe ? pe.toFixed(1) + 'x' : '—'} · Fwd ${fwdPe ? fwdPe.toFixed(1) + 'x' : '—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">ROE ${f.returnOnEquity || '—'} · FCF ${f.freeCashflow || '—'}</div>
         </div>
       </div>
       <div class="consensus-row">
         <span class="consensus-label">Signal</span>
-        <div class="signal-bar"><div class="signal-fill" style="width:\${signalPct}%;background:\${signalBarColor}"></div></div>
-        <span class="consensus-val" style="color:\${signalBarColor}">\${signal}</span>
+        <div class="signal-bar"><div class="signal-fill" style="width:${signalPct}%;background:${signalBarColor}"></div></div>
+        <span class="consensus-val" style="color:${signalBarColor}">${signal}</span>
       </div>
       <div class="consensus-row">
         <span class="consensus-label">Valuation</span>
-        <div class="signal-bar"><div class="signal-fill" style="width:\${Math.min(100,Math.max(5, 50 + upsidePct))}%;background:\${valBarColor}"></div></div>
-        <span class="consensus-val" style="color:\${valBarColor}">\${valuation.split(' ')[0]}</span>
+        <div class="signal-bar"><div class="signal-fill" style="width:${Math.min(100,Math.max(5, 50 + upsidePct))}%;background:${valBarColor}"></div></div>
+        <span class="consensus-val" style="color:${valBarColor}">${valuation.split(' ')[0]}</span>
       </div>
     </div>`;
+}
+
+// ── Entity type detection — runs after live data + AI type are known ──────────
+function detectEntityType(query, liveData, aiType) {
+  const ticker = query.trim().toUpperCase().split(/\s+/)[0].replace(/[^A-Z.]/g, '');
+  const isStock = liveData?.quote?.price != null;
+  const country = liveData?.profile?.country ?? '';
+  const exchange = liveData?.quote?.exchange ?? '';
+  const isForeign = isStock && !!country && country !== 'USA' && country !== 'United States';
+  const isADR = isForeign && ['NYQ','NYS','NMS','NGM','NCM','ASE'].some(e => exchange === e);
+  const type = aiType || (isStock ? 'stock' : 'general');
+  let entityLabel = '';
+  if (type === 'theme') entityLabel = 'THEME';
+  else if (type === 'person') entityLabel = 'PERSON';
+  else if (type === 'deal') entityLabel = 'DEAL';
+  else if (isADR) entityLabel = 'ADR';
+  else if (isForeign) entityLabel = 'FOREIGN';
+  else if (isStock) entityLabel = 'EQUITY';
+  return { isStock, isForeign, isADR, ticker, entityLabel, type };
+}
+
+// ── Response quality score — 0-10 based on data coverage ─────────────────────
+function scoreResponse(r, liveData) {
+  let score = 0;
+  if (liveData?.quote?.price != null) score += 2;
+  if (liveData?.analystData?.recommendation) score += 1;
+  const nonNA = (r.overview?.metrics || []).filter(m => m.value && m.value !== 'N/A').length;
+  score += nonNA >= 4 ? 2 : nonNA >= 2 ? 1 : 0;
+  if ((r.thesis?.bull || []).length >= 3) score += 1;
+  if ((r.thesis?.bear || []).length >= 3) score += 1;
+  if ((r.news || []).length >= 3) score += 1;
+  if ((r.comps || []).length >= 3) score += 1;
+  if ((r.risks || []).length >= 3) score += 1;
+  return { score, label: score >= 8 ? 'HIGH' : score >= 5 ? 'MED' : 'LOW' };
 }
 
 function renderResults(query, r) {
@@ -896,12 +964,25 @@ function renderResults(query, r) {
       <div class="risk-text">${rk.text}</div>
     </div>`).join('');
 
+  // Session 2 — entity type, quality score, earnings badge, consensus bar
+  const _et = window._entityType || {};
+  const _qs = scoreResponse(r, window._lastLiveData);
+  const _cal = window._lastLiveData?.calendar;
+  const _earningsDays = _cal?.nextEarningsDaysAway;
+  const _earningsDateLabel = _cal?.nextEarningsDate || _cal?.nextEarningsDateEstimate || '';
+  const earningsBadgeHTML = (_earningsDays != null && _earningsDays >= 0 && _earningsDays <= 21)
+    ? `<span class="earnings-badge">⚡ EARNINGS ${_earningsDays === 0 ? 'TODAY' : `IN ${_earningsDays}D`}${_cal?.nextEarningsDateEstimated ? ' ~' : ''}</span>` : '';
+  const entityBadgeClass = _et.isADR ? 'adr' : _et.isForeign ? 'foreign' : _et.type === 'theme' ? 'theme' : _et.isStock ? 'equity' : 'general';
+  const entityBadgeHTML = _et.entityLabel ? `<span class="result-tag ${entityBadgeClass}">${_et.entityLabel}</span>` : '';
+  const qualityBadgeHTML = `<span class="quality-badge ${_qs.label.toLowerCase()}">${_qs.label}</span>`;
+  const consensusHTML = (_et.isStock && window._lastLiveData) ? buildConsensusBar(window._lastLiveData) : '';
+
   center.innerHTML = `
     <div class="results">
       <div class="results-header">
         <div class="results-header-left">
           <div class="results-query">${r.title || query}</div>
-          <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · <span style="color:var(--green)">Live data</span>' : ' · <span style="color:var(--muted2)">No live data</span>'}</div>
+          <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · <span style="color:var(--green)">Live data</span>' : ' · <span style="color:var(--muted2)">No live data</span>'}${entityBadgeHTML}${qualityBadgeHTML}${earningsBadgeHTML}</div>
         </div>
         <div class="results-actions">
           <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/['"]/g,'')}')">◈ Valuation</button>
@@ -936,6 +1017,12 @@ function renderResults(query, r) {
           </div>
           <div class="thesis-summary">${r.thesis?.summary || ''}</div>
         </div>
+      </div>` : ''}
+
+      ${consensusHTML ? `
+      <div class="card">
+        <div class="card-header"><span class="card-icon">◈</span><span class="card-title">Market Consensus</span></div>
+        <div class="card-body">${consensusHTML}</div>
       </div>` : ''}
 
       ${newsHTML ? `
@@ -1017,7 +1104,7 @@ async function askFollowUp() {
         max_tokens: 600,
         messages: [{
           role: 'user',
-          content: `Context: The user just searched for "${currentQuery}" on a financial intelligence platform. Here is the analysis context: ${lastResultContext}\n\nFollow-up question: ${question}\n\nAnswer concisely and precisely, like an elite analyst. 2-4 sentences max unless a list is warranted.`
+          content: `The user is researching "${currentQuery}" on a financial intelligence platform.\n\nCurrent analysis context: ${lastResultContext}${searchContextHistory.length > 1 ? `\n\nRelated session context: ${searchContextHistory.slice(1, 3).map(s => `${s.ticker || s.query} (${s.type}): ${s.context.slice(0, 200)}`).join(' | ')}` : ''}\n\nFollow-up question: ${question}\n\nAnswer concisely and precisely, like an elite analyst. 2-4 sentences max unless a list is warranted.`
         }],
         system: 'You are DJAI, an elite financial intelligence engine. Answer follow-up questions concisely, precisely, and with institutional-grade insight. No fluff.'
       })
