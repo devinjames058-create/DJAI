@@ -21,6 +21,7 @@ After any changes: git add . && git commit -m "description" && git push
 Vercel auto-deploys from GitHub main branch within 30 seconds.
 Live URL: https://djai.vercel.app
 
-## Current issues to fix
-- api/macro.js — Yahoo Finance symbols returning null (^VIX, DX-Y.NYB, CL=F, ^TNX)
-- index.html — results header buttons stacking vertically instead of horizontal row
+## Notes
+- Fed Funds Rate is hardcoded in api/macro.js — update fedFundsRate and fedFundsRaw when FOMC changes rates
+- Yahoo Finance symbols ^VIX, DX-Y.NYB, CL=F, ^TNX use encodeURIComponent() — same pattern as api/data.js
+- Results header uses results-header-left (title+meta) + results-actions (buttons) flex structure

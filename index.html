@@ -874,9 +874,11 @@ function renderResults(query, r) {
   center.innerHTML = `
     <div class="results">
       <div class="results-header">
-        <div class="results-query">${r.title || query}</div>
-        <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · <span style="color:var(--green)">Live data</span>' : ' · <span style="color:var(--muted2)">No live data</span>'}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="results-header-left">
+          <div class="results-query">${r.title || query}</div>
+          <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · <span style="color:var(--green)">Live data</span>' : ' · <span style="color:var(--muted2)">No live data</span>'}</div>
+        </div>
+        <div class="results-actions">
           <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/['"]/g,'')}')">◈ Valuation</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--blue);border-color:rgba(91,143,212,0.4)" onclick="openFinancialsPanel()">▤ Financials</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--green);border-color:rgba(76,175,125,0.4)" onclick="openFilingsPanel()">⬡ Filings</button>
@@ -946,9 +948,11 @@ function renderError(query, detail) {
   center.innerHTML = `
     <div class="results">
       <div class="results-header">
-        <div class="results-query">${query}</div>
-        <div class="results-meta" style="color:var(--red)">Error</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="results-header-left">
+          <div class="results-query">${query}</div>
+          <div class="results-meta" style="color:var(--red)">Error</div>
+        </div>
+        <div class="results-actions">
           <button class="val-trigger-btn" onclick="openValPanel('${query}')">◈ Valuation</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--blue);border-color:rgba(91,143,212,0.4)" onclick="openFinancialsPanel()">▤ Financials</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--green);border-color:rgba(76,175,125,0.4)" onclick="openFilingsPanel()">⬡ Filings</button>
