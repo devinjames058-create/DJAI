@@ -571,10 +571,12 @@ let lastLiveDataAvailable = false;
 let searchContextHistory = []; // Last 3 completed searches: {query, ticker, type, context}
 let _claudeRequestQueue = Promise.resolve(); // Serializes all Claude calls
 
-// Wrap every Claude call through the queue to prevent parallel requests
+// Serialize all Claude proxy calls — prevents parallel requests against Haiku 50 RPM limit
+// result may reject (caller handles); queue always recovers from errors
 function queuedClaudeCall(fn) {
-  _claudeRequestQueue = _claudeRequestQueue.then(() => fn()).catch(() => {});
-  return _claudeRequestQueue;
+  const result = _claudeRequestQueue.then(() => fn());
+  _claudeRequestQueue = result.catch(() => {});
+  return result;
 }
 
 function showToast(msg) {
@@ -707,7 +709,7 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
   const searchCtrl = new AbortController();
   const searchTimer = setTimeout(() => searchCtrl.abort(), 35000);
   try {
-    const res = await fetch('https://djai.vercel.app/api/proxy', {
+    const res = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: searchCtrl.signal,
@@ -720,7 +722,7 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
         ],
         system: systemPrompt
       })
-    });
+    }));
     clearTimeout(searchTimer);
 
     const data = await res.json();
@@ -1095,7 +1097,7 @@ async function askFollowUp() {
   const fupCtrl = new AbortController();
   const fupTimer = setTimeout(() => fupCtrl.abort(), 30000);
   try {
-    const res = await fetch('https://djai.vercel.app/api/proxy', {
+    const res = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: fupCtrl.signal,
@@ -1108,7 +1110,7 @@ async function askFollowUp() {
         }],
         system: 'You are DJAI, an elite financial intelligence engine. Answer follow-up questions concisely, precisely, and with institutional-grade insight. No fluff.'
       })
-    });
+    }));
     clearTimeout(fupTimer);
     const data = await res.json();
     let text = (data.content || [])
@@ -1215,11 +1217,11 @@ async function runQuickPitch(title) {
   var pitchPrompt = 'You are a senior equity research analyst. Generate a comprehensive quick pitch for ' + title + ' (' + currentQuery + ').\n\n' + dataContext + '\n\nReturn ONLY valid JSON (no markdown):\n{\n  "ticker": "' + currentQuery + '",\n  "company": "' + title.replace(/"/g,"'") + '",\n  "rating": "BUY|HOLD|SELL",\n  "targetPrice": 0.00,\n  "currentPrice": 0.00,\n  "upside": "+X.X%",\n  "thesis": "One sharp differentiated investment thesis sentence.",\n  "keyMetrics": {"revenue":"X.XB","revenueGrowth":"X.X%","grossMargin":"X.X%","operatingMargin":"X.X%","netMargin":"X.X%","fcf":"X.XB","pe":"X.Xx","forwardPe":"X.Xx","evEbitda":"X.Xx","roe":"X.X%","beta":"X.X"},\n  "dcf": {"wacc":0.00,"terminalGrowth":0.025,"impliedPrice":0.00},\n  "comps": [{"name":"Peer 1","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"},{"name":"Peer 2","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"},{"name":"Peer 3","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"}],\n  "bull": ["Point 1","Point 2","Point 3"],\n  "bear": ["Risk 1","Risk 2","Risk 3"],\n  "catalysts": ["Catalyst 1","Catalyst 2","Catalyst 3"],\n  "businessOverview": "2-3 sentences.",\n  "financialAnalysis": "2-3 sentences.",\n  "valSummary": "2-3 sentences.",\n  "risks": "2 sentences.",\n  "conclusion": "2 sentences."\n}';
 
   try {
-    var res = await fetch('https://djai.vercel.app/api/proxy', {
+    var res = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({model: 'claude-haiku-4-5-20251001', max_tokens: 2500, messages: [{role:'user',content:pitchPrompt}]})
-    });
+    }));
     var data = await res.json();
     var rawText = (data.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('');
     var s = rawText.indexOf('{'), e = rawText.lastIndexOf('}');
@@ -1232,11 +1234,11 @@ async function runQuickPitch(title) {
     var qcPrompt = 'Review this equity pitch for ' + currentQuery + '. Rating: ' + pitch.rating + ', Target: $' + pitch.targetPrice + ', Thesis: "' + pitch.thesis + '". Bull: ' + (pitch.bull||[]).join('; ') + '. Bear: ' + (pitch.bear||[]).join('; ') + '. Is the thesis differentiated? Return JSON only: {"thesis_score":1-10,"optimized_thesis":"sharper version","strongest_point":"...","flag":"concern or null"}';
 
     body.innerHTML = renderSteps(3);
-    var qcRes = await fetch('https://djai.vercel.app/api/proxy', {
+    var qcRes = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{role:'user',content:qcPrompt}]})
-    });
+    }));
     var qcData = await qcRes.json();
     var qc = {};
     try {
@@ -1346,10 +1348,92 @@ async function runQuickPitch(title) {
       '</div>' +
       '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">' +
         '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Key Catalysts</div>' + catalystsHTML +
-      '</div>' + qcHTML;
+      '</div>' + qcHTML +
+      // Artifact status bar (updated by saveArtifacts)
+      '<div id="artifact-status" style="margin-top:8px;font-family:DM Mono,monospace;font-size:9px;color:var(--muted);padding:6px 10px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">Saving artifacts...</div>';
+
+    // Trigger local file generation as a background operation — does not block UI
+    saveArtifacts(pitch, qc);
 
   } catch(e) {
     body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Error building pitch: ' + e.message + '<div style="margin-top:8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted)">Try again in 60s if this is a rate limit error.</div></div>';
+  }
+}
+
+// ── Local artifact generation — calls Python local server on localhost:3001 ──
+async function saveArtifacts(pitch, qc) {
+  const statusEl = document.getElementById('artifact-status');
+  const setStatus = (msg, color) => {
+    if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+  };
+  try {
+    const et  = window._entityType || {};
+    const cal = window._lastLiveData?.calendar || {};
+    const qs  = typeof scoreResponse === 'function'
+      ? scoreResponse({thesis:{bull:pitch.bull,bear:pitch.bear},news:[],comps:pitch.comps||[],risks:[]}, window._lastLiveData)
+      : {};
+    const payload = {
+      ticker:           currentQuery.toUpperCase(),
+      company:          pitch.company || '',
+      rating:           pitch.rating  || '',
+      targetPrice:      pitch.targetPrice,
+      currentPrice:     pitch.currentPrice,
+      upside:           pitch.upside   || '',
+      thesis:           pitch.thesis   || '',
+      keyMetrics:       pitch.keyMetrics || {},
+      dcf:              pitch.dcf || {},
+      comps:            pitch.comps || [],
+      bull:             pitch.bull || [],
+      bear:             pitch.bear || [],
+      catalysts:        pitch.catalysts || [],
+      businessOverview: pitch.businessOverview || '',
+      financialAnalysis:pitch.financialAnalysis || '',
+      valSummary:       pitch.valSummary || '',
+      risks:            pitch.risks || '',
+      conclusion:       pitch.conclusion || '',
+      entityType:       et,
+      qualityScore:     qs,
+      calendar:         cal,
+      qcThesisScore:    qc ? qc.thesis_score : null,
+      qcFlag:           qc ? qc.flag : null,
+    };
+
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 20000);
+    const res = await fetch('http://localhost:3001/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: ctrl.signal,
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const result = await res.json();
+
+    const arts    = result.artifacts || {};
+    const folder  = result.folder || `~/Desktop/DJAI/pitches/${currentQuery.toUpperCase()}`;
+    const snap_ok = arts.snapshot?.ok;
+    const xlsx_ok = arts.excel?.ok;
+    const pptx_ok = arts.pptx?.ok;
+    const allOk   = snap_ok && xlsx_ok && pptx_ok;
+    const parts   = [snap_ok && 'snapshot', xlsx_ok && 'DCF.xlsx', pptx_ok && 'Pitch.pptx'].filter(Boolean);
+
+    if (allOk) {
+      setStatus(`Saved to ${folder}  ·  ${parts.join('  ·  ')}`, 'var(--green)');
+    } else if (parts.length > 0) {
+      const failed = [!snap_ok && 'snapshot', !xlsx_ok && 'xlsx', !pptx_ok && 'pptx'].filter(Boolean);
+      setStatus(`Partial save: ${parts.join(', ')} OK  ·  Failed: ${failed.join(', ')}`, 'var(--amber)');
+    } else {
+      const firstErr = Object.values(arts).find(a => a.error)?.error || 'Unknown error';
+      setStatus(`Artifact save failed: ${firstErr}`, 'var(--red)');
+    }
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      setStatus('Artifact save timed out (local server may not be running — see start_local.sh)', 'var(--muted)');
+    } else if (e.message && e.message.includes('Failed to fetch')) {
+      setStatus('Local artifact server not running — start it with: python3 ~/Desktop/DJAI/local_server.py', 'var(--muted)');
+    } else {
+      setStatus(`Artifact save failed: ${e.message}`, 'var(--red)');
+    }
   }
 }
 
@@ -1659,7 +1743,7 @@ Return ONLY this JSON (no markdown):
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 40000);
     try {
-      const res = await fetch('https://djai.vercel.app/api/proxy', {
+      const res = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
@@ -1668,7 +1752,7 @@ Return ONLY this JSON (no markdown):
           max_tokens: maxTokens,
           messages: [{ role: 'user', content: prompt }]
         })
-      });
+      }));
       clearTimeout(timeout);
       const data = await res.json();
       // Collect ALL text blocks

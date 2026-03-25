@@ -87,25 +87,42 @@ module.exports = async function handler(req, res) {
       return annual.slice(0, 4).map(d => ({ value: d.val, period: d.end, filed: d.filed }));
     };
 
+    // IFRS-full uses different concept names than US-GAAP for many metrics.
+    // Each line tries US-GAAP name first, then IFRS-full equivalent as fallback.
     const financials = {
       // Income Statement
-      revenue: getLatestAnnual('Revenues') || getLatestAnnual('RevenueFromContractWithCustomerExcludingAssessedTax') || getLatestAnnual('SalesRevenueNet'),
-      grossProfit: getLatestAnnual('GrossProfit'),
-      operatingIncome: getLatestAnnual('OperatingIncomeLoss'),
-      netIncome: getLatestAnnual('NetIncomeLoss'),
-      ebitda: getLatestAnnual('OperatingIncomeLoss'), // approximation
-      eps: getLatestAnnual('EarningsPerShareBasic'),
-      eps_diluted: getLatestAnnual('EarningsPerShareDiluted'),
+      revenue: getLatestAnnual('Revenues')
+        || getLatestAnnual('RevenueFromContractWithCustomerExcludingAssessedTax')
+        || getLatestAnnual('SalesRevenueNet')
+        || getLatestAnnual('Revenue'),                                    // ifrs-full
+      grossProfit: getLatestAnnual('GrossProfit'),                        // same in both
+      operatingIncome: getLatestAnnual('OperatingIncomeLoss')
+        || getLatestAnnual('ProfitLossFromOperatingActivities'),          // ifrs-full
+      netIncome: getLatestAnnual('NetIncomeLoss')
+        || getLatestAnnual('ProfitLoss'),                                 // ifrs-full
+      ebitda: getLatestAnnual('OperatingIncomeLoss')
+        || getLatestAnnual('ProfitLossFromOperatingActivities'),          // approximation
+      eps: getLatestAnnual('EarningsPerShareBasic')
+        || getLatestAnnual('BasicEarningsLossPerShare'),                  // ifrs-full
+      eps_diluted: getLatestAnnual('EarningsPerShareDiluted')
+        || getLatestAnnual('DilutedEarningsLossPerShare'),                // ifrs-full
       // Balance Sheet
-      totalAssets: getLatestAnnual('Assets'),
-      totalLiabilities: getLatestAnnual('Liabilities'),
-      stockholderEquity: getLatestAnnual('StockholdersEquity'),
-      cashAndEquivalents: getLatestAnnual('CashAndCashEquivalentsAtCarryingValue'),
-      longTermDebt: getLatestAnnual('LongTermDebt'),
+      totalAssets: getLatestAnnual('Assets'),                            // same in both
+      totalLiabilities: getLatestAnnual('Liabilities'),                  // same in both
+      stockholderEquity: getLatestAnnual('StockholdersEquity')
+        || getLatestAnnual('Equity'),                                     // ifrs-full
+      cashAndEquivalents: getLatestAnnual('CashAndCashEquivalentsAtCarryingValue')
+        || getLatestAnnual('CashAndCashEquivalents'),                     // ifrs-full
+      longTermDebt: getLatestAnnual('LongTermDebt')
+        || getLatestAnnual('NoncurrentLiabilities')
+        || getLatestAnnual('LongtermBorrowings'),                         // ifrs-full
       // Cash Flow
-      operatingCashflow: getLatestAnnual('NetCashProvidedByUsedInOperatingActivities'),
-      capex: getLatestAnnual('PaymentsToAcquirePropertyPlantAndEquipment'),
-      dividendsPaid: getLatestAnnual('PaymentsOfDividends'),
+      operatingCashflow: getLatestAnnual('NetCashProvidedByUsedInOperatingActivities')
+        || getLatestAnnual('CashFlowsFromUsedInOperatingActivities'),     // ifrs-full
+      capex: getLatestAnnual('PaymentsToAcquirePropertyPlantAndEquipment')
+        || getLatestAnnual('PurchaseOfPropertyPlantAndEquipment'),        // ifrs-full
+      dividendsPaid: getLatestAnnual('PaymentsOfDividends')
+        || getLatestAnnual('DividendsPaid'),                              // ifrs-full
     };
 
     return res.status(200).json({
