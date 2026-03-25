@@ -290,6 +290,8 @@ body::before {
 .filing-badge.tenk { background: rgba(201,168,76,0.15); color: var(--gold); }
 .filing-badge.tenq { background: rgba(91,143,212,0.15); color: var(--blue); }
 .filing-badge.eightk { background: rgba(76,175,125,0.15); color: var(--green); }
+.filing-badge.twentyf { background: rgba(201,168,76,0.15); color: var(--gold); }
+.filing-badge.sixk { background: rgba(91,143,212,0.15); color: var(--blue); }
 .filing-info { flex: 1; }
 .filing-desc { font-size: 12px; color: var(--text); }
 .filing-date { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 2px; }
@@ -1333,8 +1335,13 @@ async function loadFinancials(bodyId = 'fin-body') {
         </tbody>
       </table>
     </div>
+    ${(() => {
+      const balanceNull = av.every(h => h.totalAssets == null && h.cashAndEquivalents == null && h.totalDebt == null && h.shareholderEquity == null);
+      const cashflowNull = av.every(h => h.operatingCashflow == null && h.capex == null && h.freeCashflow == null);
+      return `
     <div class="val-section" style="margin-top:20px">
       <div class="val-section-title">Balance Sheet</div>
+      ${balanceNull ? `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);background:var(--surface2);border-radius:4px;padding:6px 10px;margin-bottom:10px">Balance sheet data unavailable for ADR / foreign-listed tickers via this data source.</div>` : ''}
       <table class="fin-table">
         <thead><tr>${headerHTML}</tr></thead>
         <tbody>
@@ -1347,6 +1354,7 @@ async function loadFinancials(bodyId = 'fin-body') {
     </div>
     <div class="val-section" style="margin-top:20px">
       <div class="val-section-title">Cash Flow Statement</div>
+      ${cashflowNull ? `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);background:var(--surface2);border-radius:4px;padding:6px 10px;margin-bottom:10px">Cash flow data unavailable for ADR / foreign-listed tickers via this data source.</div>` : ''}
       <table class="fin-table">
         <thead><tr>${headerHTML}</tr></thead>
         <tbody>
@@ -1357,6 +1365,7 @@ async function loadFinancials(bodyId = 'fin-body') {
         </tbody>
       </table>
     </div>`;
+    })()}` ;
 }
 
 async function loadFilings(bodyId = 'fil-body') {
@@ -1372,10 +1381,11 @@ async function loadFilings(bodyId = 'fil-body') {
       body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">No SEC filings found for this ticker.</div>';
       return;
     }
-    const badgeClass = (form) => form === '10-K' ? 'tenk' : form === '10-Q' ? 'tenq' : 'eightk';
+    const badgeClass = (form) => ({'10-K':'tenk','10-Q':'tenq','20-F':'twentyf','6-K':'sixk'}[form] || 'eightk');
     body.innerHTML = `
       <div class="val-section">
         <div class="val-section-title">${data.companyName} — SEC Filings</div>
+        ${data.isForeignFiler ? `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--gold);background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:4px;padding:6px 10px;margin-bottom:12px">Foreign Private Issuer — files 20-F (annual report) and 6-K (current reports) with SEC EDGAR</div>` : ''}
         ${data.filings.map(f => `
           <div class="filing-item">
             <span class="filing-badge ${badgeClass(f.form)}">${f.form}</span>

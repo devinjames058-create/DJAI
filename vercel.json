@@ -8,6 +8,9 @@
     },
     "api/data.js": {
       "maxDuration": 30
+    },
+    "api/filings.js": {
+      "maxDuration": 30
     }
   }
 }

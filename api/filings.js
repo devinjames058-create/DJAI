@@ -13,12 +13,6 @@ module.exports = async function handler(req, res) {
 
   try {
     // Step 1: Get CIK number from ticker
-    const cikRes = await fetch(
-      `https://efts.sec.gov/LATEST/search-index?q=%22${encodeURIComponent(ticker)}%22&dateRange=custom&startdt=2020-01-01&forms=10-K`,
-      { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' } }
-    );
-
-    // Use the ticker lookup endpoint
     const tickerMapRes = await fetch(
       'https://www.sec.gov/files/company_tickers.json',
       { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' } }
@@ -52,11 +46,11 @@ module.exports = async function handler(req, res) {
     const primaryDocs = recent.primaryDocument || [];
     const descriptions = recent.primaryDocDescription || [];
 
-    // Extract 10-K, 10-Q, 8-K filings
+    // Extract domestic (10-K, 10-Q, 8-K) and foreign private issuer (20-F, 6-K) filings
     const filings = [];
     for (let i = 0; i < forms.length && filings.length < 20; i++) {
       const form = forms[i];
-      if (['10-K', '10-Q', '8-K'].includes(form)) {
+      if (['10-K', '10-Q', '8-K', '20-F', '6-K'].includes(form)) {
         const accNum = accNums[i].replace(/-/g, '');
         const primaryDoc = primaryDocs[i];
         const viewerUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNum}/${primaryDoc}`;
@@ -78,13 +72,17 @@ module.exports = async function handler(req, res) {
       { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' } }
     );
     const factsData = await factsRes.json();
-    const facts = factsData?.facts?.['us-gaap'] || {};
+    // US GAAP filers use 'us-gaap'; foreign private issuers (IFRS) use 'ifrs-full'
+    const facts = factsData?.facts?.['us-gaap'] || factsData?.facts?.['ifrs-full'] || {};
+    const isForeignFiler = filings.some(f => f.form === '20-F');
+    // Annual report form type varies: 10-K for domestic, 20-F for foreign issuers
+    const annualFormTypes = ['10-K', '20-F'];
 
     // Extract key financial metrics from XBRL data
     const getLatestAnnual = (concept) => {
       const data = facts[concept]?.units?.USD;
       if (!data) return null;
-      const annual = data.filter(d => d.form === '10-K' && d.val != null)
+      const annual = data.filter(d => annualFormTypes.includes(d.form) && d.val != null)
         .sort((a, b) => new Date(b.end) - new Date(a.end));
       return annual.slice(0, 4).map(d => ({ value: d.val, period: d.end, filed: d.filed }));
     };
@@ -115,6 +113,7 @@ module.exports = async function handler(req, res) {
       ticker: ticker.toUpperCase(),
       cik,
       companyName,
+      isForeignFiler,
       filings,
       financials
     });
