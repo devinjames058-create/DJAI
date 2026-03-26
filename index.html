@@ -275,6 +275,35 @@ body::before {
 .qp-del-sub { font-size:10px; color:var(--muted); font-family:'DM Mono',monospace; }
 .qp-del-link { margin-left:auto; font-family:'DM Mono',monospace; font-size:10px; color:var(--gold); text-decoration:none; padding:4px 10px; border:1px solid rgba(201,168,76,0.3); border-radius:5px; }
 
+/* PORTFOLIO */
+.port-position { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); }
+.port-ticker { font-family:'DM Mono',monospace; font-size:11px; color:var(--gold); font-weight:500; }
+.port-shares { font-family:'DM Mono',monospace; font-size:10px; color:var(--muted2); }
+.port-pnl { font-family:'DM Mono',monospace; font-size:11px; font-weight:500; text-align:right; }
+.port-pnl.up { color:var(--green); }
+.port-pnl.down { color:var(--red); }
+.port-pnl.flat { color:var(--muted2); }
+.port-alert { width:6px; height:6px; border-radius:50%; display:inline-block; margin-left:3px; flex-shrink:0; }
+.port-alert.amber { background:var(--amber); }
+.port-alert.red { background:var(--red); animation:alertPulse 1.5s infinite; }
+@keyframes alertPulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.port-remove { color:var(--muted); font-size:11px; cursor:pointer; padding:2px 5px; border-radius:3px; background:none; border:none; line-height:1; }
+.port-remove:hover { color:var(--red); }
+.port-total { display:flex; justify-content:space-between; align-items:center; padding-top:8px; margin-top:4px; border-top:1px solid var(--border2); }
+.port-total-label { font-family:'DM Mono',monospace; font-size:9px; color:var(--muted); text-transform:uppercase; }
+.port-total-val { font-family:'DM Mono',monospace; font-size:11px; font-weight:500; }
+.port-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:600; align-items:center; justify-content:center; }
+.port-modal.open { display:flex; }
+.port-modal-inner { background:var(--surface); border:1px solid var(--border2); border-radius:12px; padding:24px; width:300px; }
+.port-modal-title { font-family:'Playfair Display',serif; font-size:15px; color:var(--gold); margin-bottom:16px; }
+.port-modal-field { margin-bottom:12px; }
+.port-modal-label { font-family:'DM Mono',monospace; font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px; }
+.port-modal-input { width:100%; background:var(--surface2); border:1px solid var(--border2); border-radius:6px; padding:7px 10px; color:var(--text); font-family:'DM Mono',monospace; font-size:12px; outline:none; }
+.port-modal-input:focus { border-color:var(--gold); }
+.port-modal-btns { display:flex; gap:8px; margin-top:16px; }
+.port-modal-save { flex:1; background:var(--gold); border:none; border-radius:6px; padding:8px; color:#0a0a0b; font-size:12px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif; }
+.port-modal-cancel { flex:1; background:var(--surface2); border:1px solid var(--border2); border-radius:6px; padding:8px; color:var(--muted2); font-size:12px; cursor:pointer; font-family:'DM Sans',sans-serif; }
+
 /* NEWS WITH LINKS */
 .news-item-link { text-decoration: none; color: inherit; display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); transition: background .1s; }
 .news-item-link:last-child { border-bottom: none; }
@@ -455,17 +484,18 @@ body::before {
         <div class="sidebar-title">Market Pulse</div>
       </div>
       <div class="right-section">
-        <div class="right-label">Watchlist</div>
-        <div id="watchlist-chips">
-          <span class="ticker-chip" onclick="quickSearch('SPY')">SPY</span>
-          <span class="ticker-chip" onclick="quickSearch('QQQ')">QQQ</span>
-          <span class="ticker-chip" onclick="quickSearch('BLK')">BLK</span>
-          <span class="ticker-chip" onclick="quickSearch('GS')">GS</span>
-          <span class="ticker-chip" onclick="quickSearch('BX')">BX</span>
-          <span class="ticker-chip" onclick="quickSearch('APO')">APO</span>
-          <span class="ticker-chip" onclick="quickSearch('KKR')">KKR</span>
-          <span class="ticker-chip" onclick="quickSearch('ARES')">ARES</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div class="right-label" style="margin-bottom:0">Watchlist</div>
+          <button onclick="addToWatchlist(currentQuery)" style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 8px;border-radius:4px;border:1px dashed var(--border2);background:none;color:var(--muted);cursor:pointer" title="Add current search to watchlist">+ Add</button>
         </div>
+        <div id="watchlist-chips"></div>
+      </div>
+      <div class="right-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div class="right-label" style="margin-bottom:0">Portfolio</div>
+          <button onclick="openPortfolioModal()" style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 8px;border-radius:4px;border:1px dashed var(--border2);background:none;color:var(--muted);cursor:pointer">+ Add</button>
+        </div>
+        <div id="portfolio-positions"></div>
       </div>
       <div class="right-section">
         <div class="right-label">Macro Indicators</div>
@@ -484,6 +514,28 @@ body::before {
         <button class="ask-btn" onclick="askFollowUp()">Ask Claude ✦</button>
         <div class="followup-result" id="followup-result"></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="port-modal" id="port-modal" onclick="if(event.target===this)closePortfolioModal()">
+  <div class="port-modal-inner">
+    <div class="port-modal-title">Add Position</div>
+    <div class="port-modal-field">
+      <div class="port-modal-label">Ticker</div>
+      <input class="port-modal-input" id="port-modal-ticker" placeholder="e.g. GS" autocomplete="off" autocapitalize="characters">
+    </div>
+    <div class="port-modal-field">
+      <div class="port-modal-label">Shares</div>
+      <input class="port-modal-input" id="port-modal-shares" type="number" min="0" step="any" placeholder="e.g. 10">
+    </div>
+    <div class="port-modal-field">
+      <div class="port-modal-label">Cost Basis ($ per share)</div>
+      <input class="port-modal-input" id="port-modal-cost" type="number" min="0" step="any" placeholder="e.g. 450.00">
+    </div>
+    <div class="port-modal-btns">
+      <button class="port-modal-save" onclick="savePortfolioModal()">Add Position</button>
+      <button class="port-modal-cancel" onclick="closePortfolioModal()">Cancel</button>
     </div>
   </div>
 </div>
@@ -579,6 +631,209 @@ function queuedClaudeCall(fn) {
   return result;
 }
 
+// ─── PORTFOLIO MODULE ────────────────────────────────────────────────────────
+
+const PORTFOLIO_KEY = 'djai_portfolio';
+const DEFAULT_WATCHLIST = ['SPY','QQQ','BLK','GS','BX','APO','KKR','ARES'];
+window._portfolioPrices = {}; // ticker → latest price
+
+function loadPortfolio() {
+  try {
+    const raw = localStorage.getItem(PORTFOLIO_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && Array.isArray(p.positions) && Array.isArray(p.watchlist)) return p;
+    }
+  } catch(e) {}
+  return { positions: [], watchlist: [...DEFAULT_WATCHLIST], alertThreshold: 0.20 };
+}
+
+function savePortfolio(portfolio) {
+  try { localStorage.setItem(PORTFOLIO_KEY, JSON.stringify(portfolio)); } catch(e) {}
+  backupPortfolioToDisk(portfolio);
+}
+
+async function backupPortfolioToDisk(portfolio) {
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 3000);
+    await fetch('http://localhost:3001/portfolio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: ctrl.signal,
+      body: JSON.stringify(portfolio)
+    });
+    clearTimeout(to);
+  } catch(e) {} // silent — local server may not be running
+}
+
+function addToPortfolio(ticker, company, shares, costBasis) {
+  const p = loadPortfolio();
+  const t = ticker.toUpperCase();
+  const idx = p.positions.findIndex(pos => pos.ticker === t);
+  const entry = { ticker: t, company: company || t, shares: Number(shares), costBasis: Number(costBasis), addedDate: new Date().toISOString().split('T')[0] };
+  if (idx >= 0) { entry.addedDate = p.positions[idx].addedDate; p.positions[idx] = entry; }
+  else { p.positions.push(entry); }
+  savePortfolio(p);
+  renderPortfolio();
+  showToast(t + ' added to portfolio');
+}
+
+function removeFromPortfolio(ticker) {
+  const p = loadPortfolio();
+  p.positions = p.positions.filter(pos => pos.ticker !== ticker.toUpperCase());
+  savePortfolio(p);
+  renderPortfolio();
+  showToast(ticker.toUpperCase() + ' removed');
+}
+
+function addToWatchlist(ticker) {
+  if (!ticker || !ticker.trim()) { showToast('Search a ticker first'); return; }
+  const t = ticker.trim().toUpperCase().split(' ')[0].replace(/[^A-Z.]/g, '');
+  if (!t || t.length > 6) { showToast('Invalid ticker'); return; }
+  const p = loadPortfolio();
+  if (p.watchlist.includes(t)) { showToast(t + ' already in watchlist'); return; }
+  p.watchlist.push(t);
+  savePortfolio(p);
+  renderWatchlist();
+  showToast(t + ' added to watchlist');
+}
+
+function removeFromWatchlist(ticker) {
+  const p = loadPortfolio();
+  p.watchlist = p.watchlist.filter(t => t !== ticker.toUpperCase());
+  savePortfolio(p);
+  renderWatchlist();
+}
+
+function renderWatchlist() {
+  const el = document.getElementById('watchlist-chips');
+  if (!el) return;
+  const p = loadPortfolio();
+  if (!p.watchlist.length) {
+    el.innerHTML = '<span style="font-size:10px;color:var(--muted)">Empty. Search a ticker and click + Add.</span>';
+    return;
+  }
+  el.innerHTML = p.watchlist.map(t =>
+    `<span class="ticker-chip" onclick="quickSearch('${t}')" title="Search · right-click to remove"
+       oncontextmenu="event.preventDefault();removeFromWatchlist('${t}')">${t}</span>`
+  ).join('');
+}
+
+function renderPortfolio() {
+  const el = document.getElementById('portfolio-positions');
+  if (!el) return;
+  const p = loadPortfolio();
+  if (!p.positions.length) {
+    el.innerHTML = '<div style="font-size:10px;color:var(--muted);padding:4px 0">No positions. Search a ticker, then click + Add.</div>';
+    return;
+  }
+  let totalCost = 0, totalValue = 0, hasAnyPrice = false;
+  const rows = p.positions.map(pos => {
+    const price = window._portfolioPrices[pos.ticker];
+    const cost = pos.shares * pos.costBasis;
+    const value = price != null ? pos.shares * price : null;
+    const pnl = value != null ? value - cost : null;
+    const pnlPct = (pnl != null && cost > 0) ? pnl / cost : null;
+    const driftAbs = pnlPct != null ? Math.abs(pnlPct) : 0;
+    const alertClass = driftAbs >= p.alertThreshold ? 'red' : driftAbs >= p.alertThreshold * 0.8 ? 'amber' : '';
+    const pnlClass = pnl == null ? 'flat' : pnl > 0 ? 'up' : pnl < 0 ? 'down' : 'flat';
+    const pnlText = pnl == null ? '—'
+      : (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(0)
+        + (pnlPct != null ? ' (' + (pnlPct * 100).toFixed(1) + '%)' : '');
+    if (value != null) { totalCost += cost; totalValue += value; hasAnyPrice = true; }
+    const alertDot = alertClass ? `<span class="port-alert ${alertClass}"></span>` : '';
+    return `<div class="port-position">
+      <div>
+        <div style="display:flex;align-items:center;gap:3px">
+          <span class="port-ticker">${pos.ticker}</span>${alertDot}
+        </div>
+        <div class="port-shares">${pos.shares}sh · $${Number(pos.costBasis).toFixed(2)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px">
+        <span class="port-pnl ${pnlClass}">${pnlText}</span>
+        <button class="port-remove" onclick="removeFromPortfolio('${pos.ticker}')" title="Remove position">×</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  let totalBlock = '';
+  if (hasAnyPrice && totalCost > 0) {
+    const totalPnl = totalValue - totalCost;
+    const totalPnlPct = totalPnl / totalCost;
+    const tClass = totalPnl > 0 ? 'var(--green)' : totalPnl < 0 ? 'var(--red)' : 'var(--muted2)';
+    const tText = (totalPnl >= 0 ? '+$' : '-$') + Math.abs(totalPnl).toFixed(0) + ' (' + (totalPnlPct * 100).toFixed(1) + '%)';
+    totalBlock = `<div class="port-total"><span class="port-total-label">Total P&amp;L</span><span class="port-total-val" style="color:${tClass}">${tText}</span></div>`;
+  }
+  el.innerHTML = rows + totalBlock;
+}
+
+// ── Portfolio modal ──────────────────────────────────────────────────────────
+function openPortfolioModal(prefillTicker) {
+  const t = prefillTicker || (currentQuery ? currentQuery.trim().toUpperCase().split(' ')[0].replace(/[^A-Z.]/g,'') : '');
+  document.getElementById('port-modal-ticker').value = t;
+  document.getElementById('port-modal-shares').value = '';
+  document.getElementById('port-modal-cost').value = '';
+  document.getElementById('port-modal').classList.add('open');
+  setTimeout(() => {
+    const field = t ? document.getElementById('port-modal-shares') : document.getElementById('port-modal-ticker');
+    field && field.focus();
+  }, 50);
+}
+
+function closePortfolioModal() {
+  document.getElementById('port-modal').classList.remove('open');
+}
+
+function savePortfolioModal() {
+  const ticker = (document.getElementById('port-modal-ticker').value || '').trim().toUpperCase();
+  const shares = parseFloat(document.getElementById('port-modal-shares').value);
+  const cost   = parseFloat(document.getElementById('port-modal-cost').value);
+  if (!ticker)             { showToast('Enter a ticker');          return; }
+  if (isNaN(shares) || shares <= 0) { showToast('Enter valid share count'); return; }
+  if (isNaN(cost)   || cost < 0)    { showToast('Enter valid cost basis');  return; }
+  const company = (window._lastLiveData?.quote?.companyName) || ticker;
+  addToPortfolio(ticker, company, shares, cost);
+  closePortfolioModal();
+}
+
+// Enter key submits modal
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && document.getElementById('port-modal').classList.contains('open')) {
+    savePortfolioModal();
+  }
+  if (e.key === 'Escape' && document.getElementById('port-modal').classList.contains('open')) {
+    closePortfolioModal();
+  }
+});
+
+// ── Background price refresh for portfolio ───────────────────────────────────
+async function refreshPortfolioPrices() {
+  const p = loadPortfolio();
+  if (!p.positions.length) return;
+  for (const pos of p.positions) {
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 6000);
+      const res = await fetch('https://djai.vercel.app/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: ctrl.signal,
+        body: JSON.stringify({ ticker: pos.ticker })
+      });
+      clearTimeout(to);
+      if (!res.ok) continue;
+      const json = await res.json();
+      const price = json?.data?.quote?.price;
+      if (price != null) window._portfolioPrices[pos.ticker] = price;
+    } catch(e) {}
+    await new Promise(r => setTimeout(r, 600)); // stagger requests
+  }
+  renderPortfolio();
+}
+
+// ─── END PORTFOLIO MODULE ────────────────────────────────────────────────────
+
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -646,6 +901,11 @@ async function runSearch() {
   lastLiveDataAvailable = !!liveData;
   window._lastLiveData = liveData; // Store globally for renderResults access
   window._entityType = detectEntityType(query, liveData, null); // Preliminary; AI type unknown yet
+  // Cache current price for portfolio P&L (update even if not in portfolio — may add later)
+  if (liveData?.quote?.price != null && window._entityType?.ticker) {
+    window._portfolioPrices[window._entityType.ticker] = liveData.quote.price;
+    renderPortfolio(); // refresh P&L with latest price
+  }
   const liveDataStr = formatMarketDataForPrompt(liveData);
 
   // Pre-earnings context — inject if earnings within 21 days
@@ -979,6 +1239,20 @@ function renderResults(query, r) {
   const qualityBadgeHTML = `<span class="quality-badge ${_qs.label.toLowerCase()}">${_qs.label}</span>`;
   const consensusHTML = (_et.isStock && window._lastLiveData) ? buildConsensusBar(window._lastLiveData) : '';
 
+  // Portfolio action strip — shown when current search is a stock
+  const _port = _et.isStock ? loadPortfolio() : null;
+  const _inPort = _port ? _port.positions.find(p => p.ticker === _et.ticker) : null;
+  const _inWatch = _port ? _port.watchlist.includes(_et.ticker || '') : false;
+  const portStripHTML = _et.isStock ? `
+    <div style="display:flex;gap:8px;padding:8px 0 6px;border-bottom:1px solid var(--border)">
+      <button onclick="addToWatchlist('${_et.ticker}')"
+        style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 10px;border-radius:4px;border:1px solid ${_inWatch ? 'rgba(76,175,125,0.4)' : 'var(--border2)'};background:var(--surface2);color:${_inWatch ? 'var(--green)' : 'var(--muted2)'};cursor:pointer;transition:all .15s">
+        ${_inWatch ? '✓ Watching' : '☆ Watchlist'}</button>
+      <button onclick="${_inPort ? `removeFromPortfolio('${_et.ticker}')` : `openPortfolioModal('${_et.ticker}')`}"
+        style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 10px;border-radius:4px;border:1px solid ${_inPort ? 'rgba(76,175,125,0.4)' : 'var(--border2)'};background:var(--surface2);color:${_inPort ? 'var(--green)' : 'var(--muted2)'};cursor:pointer;transition:all .15s">
+        ${_inPort ? `✓ ${_inPort.shares}sh @ $${Number(_inPort.costBasis).toFixed(2)}` : '+ Portfolio'}</button>
+    </div>` : '';
+
   center.innerHTML = `
     <div class="results">
       <div class="results-header">
@@ -993,6 +1267,7 @@ function renderResults(query, r) {
           <button class="val-trigger-btn" style="background:linear-gradient(135deg,rgba(201,168,76,0.15),rgba(91,143,212,0.1));color:var(--gold);border-color:rgba(201,168,76,0.4);font-weight:500" onclick="runQuickPitch('${(r.title||query).replace(/['"]/g,'')}')">⚡ Quick Pitch</button>
         </div>
       </div>
+      ${portStripHTML}
 
       ${metricsHTML ? `
       <div class="card" style="animation-delay:.0s">
@@ -1353,7 +1628,7 @@ async function runQuickPitch(title) {
       '<div id="artifact-status" style="margin-top:8px;font-family:DM Mono,monospace;font-size:9px;color:var(--muted);padding:6px 10px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">Saving artifacts...</div>';
 
     // Trigger local file generation as a background operation — does not block UI
-    saveArtifacts(pitch, qc);
+    saveArtifacts(pitch, qc, currentQuery);
 
   } catch(e) {
     body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Error building pitch: ' + e.message + '<div style="margin-top:8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted)">Try again in 60s if this is a rate limit error.</div></div>';
@@ -1361,11 +1636,18 @@ async function runQuickPitch(title) {
 }
 
 // ── Local artifact generation — calls Python local server on localhost:3001 ──
-async function saveArtifacts(pitch, qc) {
+async function saveArtifacts(pitch, qc, tickerAtCall) {
   const statusEl = document.getElementById('artifact-status');
   const setStatus = (msg, color) => {
     if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
   };
+  // Safari blocks HTTP localhost from HTTPS pages — warn and skip
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  if (isSafari) {
+    setStatus('Artifact generation requires Chrome or Firefox (Safari blocks local server from HTTPS pages)', 'var(--amber)');
+    return;
+  }
+  const _ticker = (tickerAtCall || currentQuery).toUpperCase(); // captured at call time, not deferred
   try {
     const et  = window._entityType || {};
     const cal = window._lastLiveData?.calendar || {};
@@ -1373,7 +1655,7 @@ async function saveArtifacts(pitch, qc) {
       ? scoreResponse({thesis:{bull:pitch.bull,bear:pitch.bear},news:[],comps:pitch.comps||[],risks:[]}, window._lastLiveData)
       : {};
     const payload = {
-      ticker:           currentQuery.toUpperCase(),
+      ticker:           _ticker,
       company:          pitch.company || '',
       rating:           pitch.rating  || '',
       targetPrice:      pitch.targetPrice,
@@ -1410,7 +1692,7 @@ async function saveArtifacts(pitch, qc) {
     const result = await res.json();
 
     const arts    = result.artifacts || {};
-    const folder  = result.folder || `~/Desktop/DJAI/pitches/${currentQuery.toUpperCase()}`;
+    const folder  = result.folder || `~/Desktop/DJAI/pitches/${_ticker}`;
     const snap_ok = arts.snapshot?.ok;
     const xlsx_ok = arts.excel?.ok;
     const pptx_ok = arts.pptx?.ok;
@@ -2094,10 +2376,18 @@ function renderWriteUp() {
     </div>`;
 }
 
-// ESC to close val panel
+// ESC to close val panel (portfolio ESC handled in portfolio module)
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeValPanel();
 });
+
+// ── Portfolio init ───────────────────────────────────────────────────────────
+renderWatchlist();
+renderPortfolio();
+// Refresh portfolio prices after a brief delay (non-blocking)
+setTimeout(refreshPortfolioPrices, 2000);
+// Re-refresh every 5 minutes
+setInterval(refreshPortfolioPrices, 5 * 60 * 1000);
 
 </script>
 

@@ -87,18 +87,18 @@ class ArtifactHandler(http.server.BaseHTTPRequestHandler):
         if self.path == '/health':
             self._send_json(200, {
                 'status': 'ok',
-                'version': '1.0',
+                'version': '1.1',
                 'openpyxl': HAS_OPENPYXL,
                 'pptx': HAS_PPTX,
                 'pitches_dir': str(PITCHES_DIR)
             })
+        elif self.path == '/portfolio':
+            portfolio = load_portfolio_disk()
+            self._send_json(200, {'ok': True, 'portfolio': portfolio})
         else:
             self._send_json(404, {'error': 'Not found'})
 
     def do_POST(self):
-        if self.path != '/generate':
-            self._send_json(404, {'error': 'Not found'})
-            return
         try:
             length = int(self.headers.get('Content-Length', 0))
             raw = self.rfile.read(length)
@@ -106,14 +106,44 @@ class ArtifactHandler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             self._send_json(400, {'error': f'Bad request: {exc}'})
             return
-        try:
-            result = generate_artifacts(data)
-            ticker = data.get('ticker', '?')
-            ok_count = sum(1 for a in result.get('artifacts', {}).values() if a.get('ok'))
-            print(f'[DJAI] {ticker}: {ok_count}/{len(result.get("artifacts", {}))} artifacts saved')
-            self._send_json(200, result)
-        except Exception as exc:
-            self._send_json(500, {'error': str(exc), 'trace': traceback.format_exc()})
+
+        if self.path == '/generate':
+            try:
+                result = generate_artifacts(data)
+                ticker = data.get('ticker', '?')
+                ok_count = sum(1 for a in result.get('artifacts', {}).values() if a.get('ok'))
+                print(f'[DJAI] {ticker}: {ok_count}/{len(result.get("artifacts", {}))} artifacts saved')
+                self._send_json(200, result)
+            except Exception as exc:
+                self._send_json(500, {'error': str(exc), 'trace': traceback.format_exc()})
+        elif self.path == '/portfolio':
+            try:
+                save_portfolio_disk(data)
+                self._send_json(200, {'ok': True})
+            except Exception as exc:
+                self._send_json(500, {'error': str(exc)})
+        else:
+            self._send_json(404, {'error': 'Not found'})
+
+
+# ── Portfolio disk persistence ──────────────────────────────────────────────────
+PORTFOLIO_FILE = Path.home() / 'Desktop' / 'DJAI' / 'portfolio.json'
+
+def load_portfolio_disk() -> dict:
+    try:
+        if PORTFOLIO_FILE.exists():
+            with open(PORTFOLIO_FILE, 'r', encoding='utf-8') as fh:
+                return json.load(fh)
+    except Exception:
+        pass
+    return {'positions': [], 'watchlist': [], 'alertThreshold': 0.20}
+
+def save_portfolio_disk(portfolio: dict):
+    PORTFOLIO_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(PORTFOLIO_FILE, 'w', encoding='utf-8') as fh:
+        json.dump(portfolio, fh, indent=2, default=str)
+    print(f'[DJAI] Portfolio saved: {len(portfolio.get("positions", []))} positions, '
+          f'{len(portfolio.get("watchlist", []))} watchlist')
 
 
 # ── Folder + file utilities ─────────────────────────────────────────────────────
@@ -346,6 +376,14 @@ def generate_excel(data: dict, ticker: str, today: str, out_path: Path):
         cell.alignment = _align(wrap=True)
         row += 1
 
+    # DCF disclaimer note
+    ws1.merge_cells(f'A{row}:E{row}')
+    _set(ws1, row, 1,
+         '⚠  DCF figures are AI-estimated approximations — not a full bottom-up DCF model.  '
+         'Use the DCF sheet as a directional starting point only.',
+         size=8, color=AMBER, fill=SURFACE, italic=True, align='left', wrap=True)
+    ws1.row_dimensions[row].height = 24
+
     ws1.sheet_view.showGridLines = False
 
     # ── Sheet 2: DCF Model ─────────────────────────────────────────────────────
@@ -357,6 +395,13 @@ def generate_excel(data: dict, ticker: str, today: str, out_path: Path):
     ws2.merge_cells('A1:G1')
     _set(ws2, 1, 1, f'DCF MODEL — {ticker}', bold=True, size=13, color=GOLD_LIGHT, fill=NAVY, align='center')
     ws2.row_dimensions[1].height = 26
+
+    ws2.merge_cells('A2:G2')
+    _set(ws2, 2, 1,
+         '⚠  Simplified projection — not a full DCF model.  '
+         'AI-estimated assumptions; verify before use.',
+         size=8, color=AMBER, fill=SURFACE, italic=True, align='center')
+    ws2.row_dimensions[2].height = 16
 
     # Assumptions block (yellow = user-editable inputs)
     _set(ws2, 3, 1, 'KEY ASSUMPTIONS', bold=True, size=9, color=GOLD, fill=SURFACE)
