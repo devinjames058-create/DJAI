@@ -452,6 +452,55 @@ body::before {
 }
 .val-trigger-btn:hover { background:var(--gold3); }
 
+/* WATCHLIST CHIP WITH REMOVE BUTTON */
+.ticker-chip-wrap { display:inline-flex; align-items:stretch; margin:3px; }
+.ticker-chip-wrap .ticker-chip { margin:0; border-radius:5px 0 0 5px; border-right:none; }
+.ticker-chip-remove {
+  background:var(--surface2); border:1px solid var(--border2); border-left:none;
+  border-radius:0 5px 5px 0; color:var(--muted); cursor:pointer;
+  font-size:12px; padding:3px 7px; line-height:1; transition:all .12s;
+  font-family:'DM Mono',monospace;
+}
+.ticker-chip-remove:hover { background:rgba(224,92,92,0.15); color:var(--red); border-color:rgba(224,92,92,0.3); }
+
+/* PORTFOLIO MODAL VALIDATION */
+.port-modal-error {
+  font-family:'DM Mono',monospace; font-size:9px; color:var(--red);
+  min-height:14px; margin-top:3px; letter-spacing:0.03em;
+}
+.port-modal-input.invalid { border-color:rgba(224,92,92,0.6); }
+.port-modal-input.invalid:focus { border-color:var(--red); }
+.port-modal-save:disabled { background:var(--surface3); color:var(--muted); cursor:not-allowed; }
+
+/* MACRO TILE SOURCE LABEL */
+.macro-source {
+  font-family:'DM Mono',monospace; font-size:8px; color:var(--muted);
+  letter-spacing:0.04em; opacity:0.7; margin-left:4px;
+}
+.macro-val.unavailable { color:var(--muted); font-style:italic; }
+.macro-section-ts {
+  font-family:'DM Mono',monospace; font-size:8px; color:var(--muted);
+  letter-spacing:0.06em; margin-top:2px; margin-bottom:8px;
+}
+
+/* PROVENANCE BADGE — inline source label on data blocks */
+.provenance-tag {
+  font-family:'DM Mono',monospace; font-size:8px; color:var(--muted);
+  padding:1px 5px; border-radius:3px; background:var(--surface3);
+  border:1px solid var(--border); letter-spacing:0.04em; vertical-align:middle;
+  margin-left:4px; display:inline-block;
+}
+.provenance-tag.estimated { border-color:rgba(224,155,60,0.3); color:var(--amber); }
+.provenance-tag.live      { border-color:rgba(76,175,125,0.3); color:var(--green); }
+.provenance-tag.filed     { border-color:rgba(201,168,76,0.3); color:var(--gold); }
+
+/* CONSENSUS — null data state */
+.consensus-unavailable {
+  font-family:'DM Mono',monospace; font-size:9px; color:var(--amber);
+  padding:4px 8px; background:rgba(224,155,60,0.07); border:1px solid rgba(224,155,60,0.2);
+  border-radius:4px; display:inline-block;
+}
+
 </style>
 </head>
 <body>
@@ -531,13 +580,16 @@ body::before {
         <div id="portfolio-positions"></div>
       </div>
       <div class="right-section">
-        <div class="right-label">Macro Indicators</div>
-        <div class="macro-item"><span class="macro-label">Fed Funds Rate</span><span class="macro-val" id="macro-fed">—</span></div>
-        <div class="macro-item"><span class="macro-label">10Y Treasury</span><span class="macro-val" id="macro-t10y">—</span></div>
-        <div class="macro-item"><span class="macro-label">CPI (YoY)</span><span class="macro-val" id="macro-cpi">—</span></div>
-        <div class="macro-item"><span class="macro-label">VIX</span><span class="macro-val" id="macro-vix">—</span></div>
-        <div class="macro-item"><span class="macro-label">DXY</span><span class="macro-val" id="macro-dxy">—</span></div>
-        <div class="macro-item"><span class="macro-label">WTI Crude</span><span class="macro-val" id="macro-oil">—</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+          <div class="right-label" style="margin-bottom:0">Macro Indicators</div>
+        </div>
+        <div class="macro-section-ts" id="macro-section-ts"></div>
+        <div class="macro-item" title="" id="macro-fed-item"><span class="macro-label">Fed Funds</span><span class="macro-val" id="macro-fed">—</span></div>
+        <div class="macro-item" title="" id="macro-t10y-item"><span class="macro-label">10Y Treasury</span><span class="macro-val" id="macro-t10y">—</span></div>
+        <div class="macro-item" title="" id="macro-cpi-item"><span class="macro-label">CPI (YoY)</span><span class="macro-val" id="macro-cpi">—</span></div>
+        <div class="macro-item" title="" id="macro-vix-item"><span class="macro-label">VIX</span><span class="macro-val" id="macro-vix">—</span></div>
+        <div class="macro-item" title="" id="macro-dxy-item"><span class="macro-label">DXY</span><span class="macro-val" id="macro-dxy">—</span></div>
+        <div class="macro-item" title="" id="macro-oil-item"><span class="macro-label">WTI Crude</span><span class="macro-val" id="macro-oil">—</span></div>
       </div>
       <div class="right-section">
         <div class="right-label">Ask a follow-up</div>
@@ -556,18 +608,21 @@ body::before {
     <div class="port-modal-title">Add Position</div>
     <div class="port-modal-field">
       <div class="port-modal-label">Ticker</div>
-      <input class="port-modal-input" id="port-modal-ticker" placeholder="e.g. GS" autocomplete="off" autocapitalize="characters">
+      <input class="port-modal-input" id="port-modal-ticker" placeholder="e.g. GS" autocomplete="off" autocapitalize="characters" oninput="validatePortfolioModal()">
+      <div class="port-modal-error" id="port-modal-ticker-err"></div>
     </div>
     <div class="port-modal-field">
       <div class="port-modal-label">Shares</div>
-      <input class="port-modal-input" id="port-modal-shares" type="number" min="0" step="any" placeholder="e.g. 10">
+      <input class="port-modal-input" id="port-modal-shares" type="number" min="0.0001" step="any" placeholder="e.g. 10" oninput="validatePortfolioModal()">
+      <div class="port-modal-error" id="port-modal-shares-err"></div>
     </div>
     <div class="port-modal-field">
       <div class="port-modal-label">Cost Basis ($ per share)</div>
-      <input class="port-modal-input" id="port-modal-cost" type="number" min="0" step="any" placeholder="e.g. 450.00">
+      <input class="port-modal-input" id="port-modal-cost" type="number" min="0" step="any" placeholder="e.g. 450.00" oninput="validatePortfolioModal()">
+      <div class="port-modal-error" id="port-modal-cost-err"></div>
     </div>
     <div class="port-modal-btns">
-      <button class="port-modal-save" onclick="savePortfolioModal()">Add Position</button>
+      <button class="port-modal-save" id="port-modal-save-btn" onclick="savePortfolioModal()">Add Position</button>
       <button class="port-modal-cancel" onclick="closePortfolioModal()">Cancel</button>
     </div>
   </div>
@@ -621,7 +676,7 @@ function formatMarketDataForPrompt(md) {
 // ── LIVE MACRO DATA ─────────────────────────────────────────────
 async function fetchMacroData() {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const timeout = setTimeout(() => controller.abort(), 12000);
   try {
     const res = await fetch('https://djai.vercel.app/api/macro', { method: 'GET', signal: controller.signal });
     clearTimeout(timeout);
@@ -629,22 +684,46 @@ async function fetchMacroData() {
     const json = await res.json();
     if (!json.success || !json.data) return;
     const d = json.data;
-    const set = (id, val, up) => {
-      const el = document.getElementById(id);
-      if (el && val != null) {
+
+    // ── Timestamp label ────────────────────────────────────────────────────
+    const tsEl = document.getElementById('macro-section-ts');
+    if (tsEl && d.timestamp) {
+      const t = new Date(d.timestamp);
+      tsEl.textContent = 'As of ' + t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // ── Generic tile setter — handles ok/unavailable state + source tooltip ─
+    const setTile = (id, itemId, val, rawNum, dirFn, source, asOf) => {
+      const el  = document.getElementById(id);
+      const row = document.getElementById(itemId);
+      if (!el) return;
+      if (val != null) {
         el.textContent = val;
-        el.className = 'macro-val' + (up === true ? ' up' : up === false ? ' down' : '');
+        const dir = dirFn != null ? dirFn(rawNum) : null;
+        el.className = 'macro-val' + (dir === true ? ' up' : dir === false ? ' down' : '');
+      } else {
+        el.textContent = '—';
+        el.className = 'macro-val unavailable';
+      }
+      // Set source + asOf on title for tooltip
+      if (row && source) {
+        const asOfStr = asOf ? ` · as of ${asOf}` : '';
+        row.title = `${source}${asOfStr}`;
       }
     };
-    set('macro-fed', d.fedFundsRate);
-    set('macro-t10y', d.treasury10y, d.treasury10yRaw > 4 ? true : false);
-    set('macro-cpi', d.cpiYoy, d.cpiYoyRaw > 3 ? false : true);
-    set('macro-vix', d.vix, (d.vixRaw ?? d.vix) > 20 ? false : true); // use numeric raw value
-    set('macro-dxy', d.dxy, null);
-    set('macro-oil', d.wtiCrude, null);
+
+    setTile('macro-fed',  'macro-fed-item',  d.fedFundsRate,  d.fedFundsRaw,   null,                         d.fedFundsSource,  d.fedFundsAsOf);
+    setTile('macro-t10y', 'macro-t10y-item', d.treasury10y,   d.treasury10yRaw, v => v > 4,                  d.treasury10ySource, null);
+    setTile('macro-cpi',  'macro-cpi-item',  d.cpiYoy,        d.cpiYoyRaw,      v => v <= 2.5,               d.cpiSource,       d.cpiAsOf);
+    setTile('macro-vix',  'macro-vix-item',  d.vix,           d.vixRaw,         v => v <= 20,                d.vixSource,       null);
+    setTile('macro-dxy',  'macro-dxy-item',  d.dxy,           d.dxyRaw,         null,                        d.dxySource,       null);
+    setTile('macro-oil',  'macro-oil-item',  d.wtiCrude,      d.wtiRaw,         null,                        d.wtiSource,       null);
+
+    window._lastMacroMeta = d;
   } catch(e) {
     clearTimeout(timeout);
-    // Fail silently — keep dashes
+    // Fail tile-by-tile — dashes already rendered; log for observability
+    console.warn('[DJAI] fetchMacroData failed:', e.message);
   }
 }
 
@@ -659,6 +738,53 @@ let lastLiveDataAvailable = false;
 let searchContextHistory = []; // Last 3 completed searches: {query, ticker, type, context}
 let _claudeRequestQueue = Promise.resolve(); // Serializes all Claude calls
 let _fupCtrl = null; // Module-level follow-up AbortController — aborted on each new call
+
+// ── Search lifecycle — stale-response protection & cancellation ───────────────
+// _searchGeneration increments on every new search. Responses from prior
+// generations are discarded — prevents a slow search from overwriting a faster
+// newer one. _activeSearchCtrl cancels the previous in-flight Claude call so
+// the queue unblocks immediately instead of waiting 35 seconds.
+let _searchGeneration = 0;
+let _activeSearchCtrl = null; // AbortController for the current search's Claude call
+
+// ── Client-side result cache ───────────────────────────────────────────────────
+// Keyed by normalized query. Prevents redundant FMP + Claude calls for repeated
+// identical queries within the TTL window.
+const _clientQueryCache = new Map();
+const CLIENT_CACHE_TTL = 4 * 60 * 1000; // 4 min — align with FMP 15-min server cache
+
+// Normalize query for cache key + history dedup
+function normalizeQuery(q) {
+  return q.trim().toUpperCase().replace(/\s+/g, ' ');
+}
+
+function _cacheGet(q) {
+  const key = normalizeQuery(q);
+  const entry = _clientQueryCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CLIENT_CACHE_TTL) { _clientQueryCache.delete(key); return null; }
+  return entry;
+}
+
+function _cacheSet(q, data) {
+  const key = normalizeQuery(q);
+  _clientQueryCache.set(key, { ...data, ts: Date.now() });
+  // Cap to 30 entries — prevent unbounded memory growth across long sessions
+  if (_clientQueryCache.size > 30) {
+    _clientQueryCache.delete(_clientQueryCache.keys().next().value);
+  }
+}
+
+// ── Instrumentation counters — surfaced in console for observability ──────────
+const _metrics = {
+  searchTotal: 0, searchCacheHit: 0, searchTimeout: 0,
+  searchRateLimit: 0, searchError: 0, cacheServerHit: 0,
+  validationFailure: 0, staleDataRender: 0, tabClickNoData: 0,
+};
+function _track(key, extra) {
+  if (_metrics[key] !== undefined) _metrics[key]++;
+  console.debug(`[DJAI metrics] ${key}`, extra || '', JSON.stringify(_metrics));
+}
 
 // Serialize all Claude proxy calls — prevents parallel requests against Haiku 50 RPM limit
 // result may reject (caller handles); queue always recovers from errors
@@ -814,12 +940,14 @@ function renderWatchlist() {
   if (!p.watchlist.length) {
     el.innerHTML = '<span style="font-size:10px;color:var(--muted)">Empty. Search a ticker and click + Add.</span>';
   } else {
-    el.innerHTML = p.watchlist.map(t =>
-      `<span class="ticker-chip" onclick="quickSearch('${t}')" title="Search · right-click to remove"
-         oncontextmenu="event.preventDefault();removeFromWatchlist('${t}')">${t}</span>`
-    ).join('');
+    el.innerHTML = p.watchlist.map(t => {
+      const safe = t.replace(/'/g, "\\'");
+      return `<span class="ticker-chip-wrap">` +
+        `<span class="ticker-chip" onclick="quickSearch('${safe}')" title="Search ${t}">${t}</span>` +
+        `<button class="ticker-chip-remove" onclick="event.stopPropagation();removeFromWatchlist('${safe}')" title="Remove ${t} from watchlist" aria-label="Remove ${t}">×</button>` +
+        `</span>`;
+    }).join('');
   }
-  // Update watchlist freshness (reflects last market data fetch)
   const fi = document.getElementById('watchlist-freshness');
   if (fi) fi.innerHTML = renderFreshnessIndicator(window._lastDataMeta);
 }
@@ -872,12 +1000,53 @@ function renderPortfolio() {
   el.innerHTML = rows + totalBlock;
 }
 
+// ── Portfolio modal validation ────────────────────────────────────────────────
+// Sets/clears field-level error message and invalid CSS class.
+// Returns true if the field is valid after the update.
+function _portField(inputId, errId, errorMsg) {
+  const input = document.getElementById(inputId);
+  const err   = document.getElementById(errId);
+  const isErr = !!errorMsg;
+  if (input) input.classList.toggle('invalid', isErr);
+  if (err)   err.textContent = errorMsg || '';
+  return !isErr;
+}
+
+// Validates all three fields; updates inline errors; toggles Save button.
+// Returns true if all fields are valid.
+function validatePortfolioModal() {
+  const tickerRaw  = (document.getElementById('port-modal-ticker')?.value || '').trim();
+  const tickerClean = tickerRaw.toUpperCase().replace(/[^A-Z.]/g, '');
+  const sharesEl   = document.getElementById('port-modal-shares');
+  const costEl     = document.getElementById('port-modal-cost');
+  const sharesVal  = sharesEl?.value ?? '';
+  const costVal    = costEl?.value ?? '';
+  const shares     = parseFloat(sharesVal);
+  const cost       = parseFloat(costVal);
+
+  let ok = true;
+  ok = _portField('port-modal-ticker', 'port-modal-ticker-err',
+    (!tickerClean || tickerClean.length > 6) ? 'Enter a valid ticker (1–6 letters, e.g. AAPL)' : '') && ok;
+  ok = _portField('port-modal-shares', 'port-modal-shares-err',
+    (sharesVal === '' || isNaN(shares) || shares <= 0) ? 'Enter a positive share count' : '') && ok;
+  ok = _portField('port-modal-cost', 'port-modal-cost-err',
+    (costVal !== '' && (isNaN(cost) || cost < 0)) ? 'Enter a cost basis ≥ 0' : '') && ok;
+
+  const saveBtn = document.getElementById('port-modal-save-btn');
+  if (saveBtn) saveBtn.disabled = !ok;
+  return ok;
+}
+
 // ── Portfolio modal ──────────────────────────────────────────────────────────
 function openPortfolioModal(prefillTicker) {
   const t = prefillTicker || (currentQuery ? currentQuery.trim().toUpperCase().split(' ')[0].replace(/[^A-Z.]/g,'') : '');
   document.getElementById('port-modal-ticker').value = t;
   document.getElementById('port-modal-shares').value = '';
   document.getElementById('port-modal-cost').value = '';
+  // Reset validation state — fresh modal every open
+  ['ticker', 'shares', 'cost'].forEach(f => _portField(`port-modal-${f}`, `port-modal-${f}-err`, ''));
+  const saveBtn = document.getElementById('port-modal-save-btn');
+  if (saveBtn) saveBtn.disabled = false;
   document.getElementById('port-modal').classList.add('open');
   setTimeout(() => {
     const field = t ? document.getElementById('port-modal-shares') : document.getElementById('port-modal-ticker');
@@ -890,23 +1059,28 @@ function closePortfolioModal() {
 }
 
 function savePortfolioModal() {
-  const ticker = (document.getElementById('port-modal-ticker').value || '').trim().toUpperCase();
-  const shares = parseFloat(document.getElementById('port-modal-shares').value);
-  const cost   = parseFloat(document.getElementById('port-modal-cost').value);
-  if (!ticker)             { showToast('Enter a ticker');          return; }
-  if (isNaN(shares) || shares <= 0) { showToast('Enter valid share count'); return; }
-  if (isNaN(cost)   || cost < 0)    { showToast('Enter valid cost basis');  return; }
+  if (!validatePortfolioModal()) {
+    _track('validationFailure', 'portfolio-modal');
+    return; // Inline errors already shown — do not toast
+  }
+  const ticker  = (document.getElementById('port-modal-ticker').value || '').trim().toUpperCase().replace(/[^A-Z.]/g, '');
+  const shares  = parseFloat(document.getElementById('port-modal-shares').value);
+  const cost    = parseFloat(document.getElementById('port-modal-cost').value);
   const company = (window._lastLiveData?.quote?.companyName) || ticker;
   addToPortfolio(ticker, company, shares, cost);
   closePortfolioModal();
 }
 
-// Enter key submits modal
+// Keyboard handlers for portfolio modal — Enter submits (if valid), Escape closes
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Enter' && document.getElementById('port-modal').classList.contains('open')) {
-    savePortfolioModal();
+  const modalOpen = document.getElementById('port-modal').classList.contains('open');
+  if (!modalOpen) return;
+  if (e.key === 'Enter') {
+    e.preventDefault(); // prevent form-submit side-effects
+    savePortfolioModal(); // validation runs inside; shows inline errors if invalid
   }
-  if (e.key === 'Escape' && document.getElementById('port-modal').classList.contains('open')) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
     closePortfolioModal();
   }
 });
@@ -954,7 +1128,10 @@ function quickSearch(q) {
 }
 
 function addToHistory(query) {
-  searchHistory.unshift({ query, time: new Date() });
+  const norm = query.trim();
+  // Dedup: remove any existing entry for this query, then add to top (move-to-top semantics)
+  searchHistory = searchHistory.filter(h => normalizeQuery(h.query) !== normalizeQuery(norm));
+  searchHistory.unshift({ query: norm, time: new Date() });
   if (searchHistory.length > 20) searchHistory.pop();
   renderHistory();
 }
@@ -978,45 +1155,104 @@ function renderHistory() {
 function showLoading(query) {
   document.getElementById('landing').style.display = 'none';
   const resultsDiv = document.getElementById('results-container');
+  const steps = [
+    'Fetching live market data',
+    'Generating analyst thesis',
+    'Building comps & sector context',
+    'Compiling risk assessment'
+  ];
   resultsDiv.innerHTML = `
     <div class="loading-state">
       <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:8px">Analyzing "${query}"</div>
       <div class="loading-bar"><div class="loading-fill"></div></div>
       <div class="loading-steps">
-        <div class="loading-step active"><span class="step-icon">◈</span> Searching live market data & news</div>
-        <div class="loading-step"><span class="step-icon">◈</span> Running analyst thesis generation</div>
-        <div class="loading-step"><span class="step-icon">◈</span> Pulling comps & sector context</div>
-        <div class="loading-step"><span class="step-icon">◈</span> Compiling risk assessment</div>
+        ${steps.map((s, i) => `<div class="loading-step ${i === 0 ? 'active' : ''}" id="ls-${i}"><span class="step-icon" id="ls-icon-${i}">${i === 0 ? '◉' : '◈'}</span> ${s}</div>`).join('')}
       </div>
     </div>`;
   resultsDiv.style.display = 'block';
 }
 
+// Mark a loading step done and activate the next one (if any).
+// Safe to call even after results have rendered (elements simply won't exist).
+function _advanceLoadingStep(doneIdx) {
+  const doneEl = document.getElementById(`ls-${doneIdx}`);
+  const doneIcon = document.getElementById(`ls-icon-${doneIdx}`);
+  if (doneEl) doneEl.className = 'loading-step done';
+  if (doneIcon) doneIcon.textContent = '✓';
+  const nextEl = document.getElementById(`ls-${doneIdx + 1}`);
+  const nextIcon = document.getElementById(`ls-icon-${doneIdx + 1}`);
+  if (nextEl) nextEl.className = 'loading-step active';
+  if (nextIcon) nextIcon.textContent = '◉';
+}
+
+// ── Shared JSON extractor — used by runSearch, fetchValuation, runQuickPitch ──
+function _extractJSON(blocks) {
+  let allText = '';
+  for (const block of (blocks || [])) {
+    if (block.type === 'text' && block.text) allText += block.text;
+    if (block.type === 'tool_result' && Array.isArray(block.content)) {
+      for (const c of block.content) { if (c.type === 'text') allText += c.text; }
+    }
+  }
+  allText = allText.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  const start = allText.indexOf('{'), end = allText.lastIndexOf('}');
+  if (start === -1 || end === -1) return null;
+  return allText.slice(start, end + 1);
+}
+
 async function runSearch() {
   const query = document.getElementById('main-search').value.trim();
   if (!query) { showToast('Enter a search query'); return; }
+
+  // ── Cancel any in-flight search — unblocks the serialization queue ───────
+  if (_activeSearchCtrl) { try { _activeSearchCtrl.abort(); } catch(_) {} }
+  const gen = ++_searchGeneration;
+  _activeSearchCtrl = null; // will be assigned below after we create it
+
+  _track('searchTotal', query);
   currentQuery = query;
   const btn = document.getElementById('search-btn');
   btn.disabled = true; btn.textContent = 'Searching...';
   showLoading(query);
   addToHistory(query);
 
-  // Small delay to prevent request bursts on rapid searches
-  await new Promise(r => setTimeout(r, 300));
+  // ── Client-side cache check ─────────────────────────────────────────────
+  const cached = _cacheGet(query);
+  if (cached && cached.result) {
+    _track('searchCacheHit', query);
+    // Restore state from cache — no network calls needed
+    window._lastLiveData  = cached.liveData || null;
+    window._lastDataMeta  = cached.meta || null;
+    window._entityType    = cached.entityType || detectEntityType(query, cached.liveData, cached.result.type);
+    lastLiveDataAvailable = !!cached.liveData;
+    lastResultContext     = (cached.result.context || '').slice(0, 600);
+    if (gen === _searchGeneration) {
+      renderResults(query, cached.result);
+    }
+    btn.disabled = false; btn.textContent = 'Search';
+    return;
+  }
 
-  // Fetch live market data first (non-Claude, doesn't count toward RPM)
+  // Small debounce to prevent burst on rapid keystrokes
+  await new Promise(r => setTimeout(r, 250));
+  if (gen !== _searchGeneration) return; // superseded while waiting
+
+  // ── Step 0: Fetch live market data (parallel, before Claude) ─────────────
   const liveData = await fetchMarketData(query);
+  _advanceLoadingStep(0);
+
+  if (gen !== _searchGeneration) return; // superseded after market fetch
+
   lastLiveDataAvailable = !!liveData;
-  window._lastLiveData = liveData; // Store globally for renderResults access
-  window._entityType = detectEntityType(query, liveData, null); // Preliminary; AI type unknown yet
-  // Cache current price for portfolio P&L (update even if not in portfolio — may add later)
+  window._lastLiveData  = liveData;
+  window._entityType    = detectEntityType(query, liveData, null);
   if (liveData?.quote?.price != null && window._entityType?.ticker) {
     window._portfolioPrices[window._entityType.ticker] = liveData.quote.price;
-    renderPortfolio(); // refresh P&L with latest price
+    renderPortfolio();
   }
   const liveDataStr = formatMarketDataForPrompt(liveData);
 
-  // Pre-earnings context — inject if earnings within 21 days
+  // Pre-earnings context
   const cal = liveData?.calendar;
   const earningsDays = cal?.nextEarningsDaysAway;
   const earningsDateStr = cal?.nextEarningsDate || cal?.nextEarningsDateEstimate || '';
@@ -1024,9 +1260,9 @@ async function runSearch() {
     ? `\n\n⚠️ PRE-EARNINGS ALERT: Earnings in ${earningsDays} day${earningsDays !== 1 ? 's' : ''} (${earningsDateStr}${cal?.nextEarningsDateEstimated ? ', estimated' : ''}). Prioritize: consensus EPS estimate, beat/miss probability, key line items to watch, and guidance expectations. Add an earnings-preview section to the thesis.`
     : '';
 
-  // Cross-search context — brief session history for the AI
+  // Cross-search session context
   const priorCtx = searchContextHistory.length
-    ? `\n\nSession context (recent searches): ${searchContextHistory.slice(0, 3).map(s => `${s.ticker || s.query} (${s.type})`).join(', ')}. Reference only if directly relevant to this query.`
+    ? `\n\nSession context (recent searches): ${searchContextHistory.slice(0, 3).map(s => `${s.ticker || s.query} (${s.type})`).join(', ')}. Reference only if directly relevant.`
     : '';
 
   const systemPrompt = `You are DJAI, an elite financial intelligence engine — Bloomberg Terminal meets elite sell-side analyst.
@@ -1063,19 +1299,15 @@ When given a search query, return a JSON object with this exact structure:
   "context": "A comprehensive 3-4 sentence paragraph with deeper analysis, historical context, and forward-looking insight. This will be used to answer follow-up questions."
 }
 
-You MUST return ALL of these sections in your JSON — do not skip any:
-- type, title, overview (with description + metrics array)
-- thesis (with bull array, bear array, summary string)
-- news (array of 3-4 items with headline, source, time, sentiment)
-- comps (array of 4-5 rows with name, metric1, metric2, metric3, change, direction)
-- compsHeaders (array of 5 header strings)
-- risks (array of 3-4 items with level and text)
-- context (single paragraph string)
-
+You MUST return ALL of these sections in your JSON — do not skip any.
 Return valid JSON only. No markdown. No explanation. No truncation.`;
 
+  // ── Step 1: Claude call — create controller BEFORE queuing ───────────────
+  _advanceLoadingStep(1);
   const searchCtrl = new AbortController();
+  _activeSearchCtrl = searchCtrl;
   const searchTimer = setTimeout(() => searchCtrl.abort(), 35000);
+
   try {
     const res = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
@@ -1093,36 +1325,19 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
     }));
     clearTimeout(searchTimer);
 
-    const data = await res.json();
+    // ── Stale-response guard — discard if superseded ───────────────────────
+    if (gen !== _searchGeneration) return;
 
-    // Extract and parse JSON robustly from any response format
-    const extractJSON = (blocks) => {
-      // Collect all text content from all blocks
-      let allText = '';
-      for (const block of (blocks || [])) {
-        if (block.type === 'text' && block.text) allText += block.text;
-        // Also check tool_result blocks which may contain text
-        if (block.type === 'tool_result' && Array.isArray(block.content)) {
-          for (const c of block.content) {
-            if (c.type === 'text') allText += c.text;
-          }
-        }
-      }
-      // Strip all markdown fences
-      allText = allText
-        .replace(/```json\s*/gi, '⟨')
-        .replace(/```\s*/g, '⟩')
-        .trim();
-      // Find the outermost { } — scan for the JSON object
-      const start = allText.indexOf('{');
-      const end = allText.lastIndexOf('}');
-      if (start === -1 || end === -1) return null;
-      return allText.slice(start, end + 1);
-    };
+    _advanceLoadingStep(2);
+
+    // Track API-level errors
+    if (res.status === 429 || res.status === 529) _track('searchRateLimit', res.status);
+
+    const data = await res.json();
 
     let result;
     try {
-      const jsonStr = extractJSON(data.content);
+      const jsonStr = _extractJSON(data.content);
       if (!jsonStr) throw new Error('No JSON object found in response');
       result = JSON.parse(jsonStr);
     } catch(e) {
@@ -1134,31 +1349,45 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
           const t = block.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
           const s = t.indexOf('{'), e2 = t.lastIndexOf('}');
           if (s !== -1 && e2 !== -1) { parsed = JSON.parse(t.slice(s, e2+1)); break; }
-        } catch(e2) {}
+        } catch(_) {}
       }
       if (!parsed) {
         const allText = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
-        renderError(query, 'Could not parse AI response. Raw: ' + allText.slice(0, 300));
+        if (gen === _searchGeneration) renderError(query, 'Could not parse AI response. Raw: ' + allText.slice(0, 300));
         return;
       }
       result = parsed;
     }
 
+    if (gen !== _searchGeneration) return; // final guard before render
+
+    _advanceLoadingStep(3);
+
     lastResultContext = (result.context || '').slice(0, 600);
-    // Update entity type now that we have the AI-confirmed type
     window._entityType = detectEntityType(query, liveData, result.type);
     renderResults(query, result);
-    // Push to cross-search context history (most recent first)
+
+    // Cache the successful result
+    _cacheSet(query, { result, liveData, meta: window._lastDataMeta, entityType: window._entityType });
+
+    // Push to cross-search session context
     const _et = window._entityType;
     searchContextHistory.unshift({ query, ticker: _et.ticker, type: _et.type, context: lastResultContext.slice(0, 300) });
     if (searchContextHistory.length > 3) searchContextHistory.pop();
 
+    if (window._lastDataMeta?.cached) _track('cacheServerHit', query);
+
   } catch(e) {
     clearTimeout(searchTimer);
+    if (gen !== _searchGeneration) return;
+    if (e.name === 'AbortError') _track('searchTimeout', query);
+    else _track('searchError', e.message);
     const msg = e.name === 'AbortError' ? 'Search timed out — try again.' : e.message;
     renderError(query, msg);
   } finally {
-    btn.disabled = false; btn.textContent = 'Search';
+    if (gen === _searchGeneration) {
+      btn.disabled = false; btn.textContent = 'Search';
+    }
   }
 }
 
@@ -1169,35 +1398,47 @@ function buildConsensusBar(liveData) {
   const a = liveData.analystData || {};
   const q = liveData.quote || liveData;
 
-  // Signal: derive from recommendation
+  // Analyst consensus — FMP free tier returns null recommendation
+  const hasConsensus = !!(a.recommendation);
   const rec = (a.recommendation || '').toLowerCase();
-  let signal = 'HOLD', signalClass = 'hold', signalPct = 50;
+  let signal = hasConsensus ? 'HOLD' : null, signalClass = 'hold', signalPct = 50;
   if (rec === 'buy' || rec === 'strong_buy' || rec === 'strongbuy') { signal = 'BUY'; signalClass = 'buy'; signalPct = 82; }
   else if (rec === 'sell' || rec === 'strong_sell' || rec === 'underperform') { signal = 'SELL'; signalClass = 'sell'; signalPct = 18; }
   else if (rec === 'overweight' || rec === 'outperform') { signal = 'BUY'; signalClass = 'buy'; signalPct = 72; }
   else if (rec === 'underweight') { signal = 'SELL'; signalClass = 'sell'; signalPct = 28; }
 
-  // Valuation: compare price to analyst target
-  const price = Number(q.price || liveData.price || 0);
-  const target = Number(a.targetMean?.replace('$','') || v.targetMeanPrice?.replace('$','') || 0);
-  let valuation = 'FAIRLY VALUED', valClass = 'fair';
-  let upsidePct = 0;
+  // Price target — FMP free tier sends DCF intrinsic as proxy (not analyst consensus)
+  const hasDcfTarget = !!(a.targetMean);
+  const price  = Number(q.price || liveData.price || 0);
+  const target = Number((a.targetMean || '').toString().replace('$','') || 0);
+  let valuation = 'FAIRLY VALUED', valClass = 'fair', upsidePct = 0;
   if (price > 0 && target > 0) {
-    upsidePct = ((target - price) / price * 100);
+    upsidePct = (target - price) / price * 100;
     if (upsidePct > 15) { valuation = 'UNDERVALUED'; valClass = 'under'; }
     else if (upsidePct < -5) { valuation = 'OVERVALUED'; valClass = 'over'; }
   }
 
-  // P/E vs sector gauge
-  const pe = parseFloat(v.pe || liveData.pe || 0);
-  const fwdPe = parseFloat(v.forwardPE || liveData.forwardPE || 0);
-  const numAnalysts = a.numberOfAnalysts || 0;
+  const pe     = parseFloat(v.pe || liveData.pe || 0);
+  const fwdPe  = parseFloat(v.forwardPE || liveData.forwardPE || 0);
   const targetHigh = a.targetHigh || '—';
-  const targetLow = a.targetLow || '—';
+  const targetLow  = a.targetLow  || '—';
 
   const signalBarColor = signalClass === 'buy' ? 'var(--green)' : signalClass === 'sell' ? 'var(--red)' : 'var(--amber)';
-  const valBarColor = valClass === 'under' ? 'var(--green)' : valClass === 'over' ? 'var(--red)' : 'var(--gold)';
-  const upsideColor = upsidePct > 0 ? 'var(--green)' : 'var(--red)';
+  const valBarColor    = valClass === 'under' ? 'var(--green)' : valClass === 'over' ? 'var(--red)' : 'var(--gold)';
+  const upsideColor    = upsidePct >= 0 ? 'var(--green)' : 'var(--red)';
+
+  // Analyst signal section — show unavailable state when no consensus data
+  const signalBlock = hasConsensus
+    ? `<span class="signal-badge ${signalClass}">${signal}</span>
+       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px">${a.numberOfAnalysts || 0} analysts</div>`
+    : `<span class="consensus-unavailable">No consensus data</span>
+       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px">FMP free tier</div>`;
+
+  // Price target section — label clearly whether it's analyst consensus or DCF proxy
+  const targetLabel = hasDcfTarget ? 'DCF Intrinsic (FMP)' : 'Price Target';
+  const targetBlock = `
+    <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--gold)">${a.targetMean || '—'}</div>
+    <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">${hasDcfTarget ? 'FMP DCF estimate · not analyst consensus' : 'Range ' + targetLow + ' – ' + targetHigh}</div>`;
 
   return `
     <div class="consensus-wrap">
@@ -1205,18 +1446,18 @@ function buildConsensusBar(liveData) {
       <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
         <div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Analyst Signal</div>
-          <span class="signal-badge ${signalClass}">${signal}</span>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px">${numAnalysts} analysts</div>
+          ${signalBlock}
         </div>
         <div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Valuation</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Relative Value</div>
           <span class="val-badge ${valClass}">${valuation}</span>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:${upsideColor};margin-top:4px">${upsidePct > 0 ? '+' : ''}${upsidePct.toFixed(1)}% to target</div>
+          ${hasDcfTarget && price > 0 && target > 0
+            ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:${upsideColor};margin-top:4px">${upsidePct > 0 ? '+' : ''}${upsidePct.toFixed(1)}% vs DCF</div>`
+            : `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px">vs DCF intrinsic</div>`}
         </div>
         <div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Price Target</div>
-          <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--gold)">${a.targetMean || '—'}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">Range ${targetLow} – ${targetHigh}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">${targetLabel}</div>
+          ${targetBlock}
         </div>
         <div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:5px;text-transform:uppercase">Multiples</div>
@@ -1224,16 +1465,18 @@ function buildConsensusBar(liveData) {
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">ROE ${f.returnOnEquity || '—'} · FCF ${f.freeCashflow || '—'}</div>
         </div>
       </div>
+      ${hasConsensus ? `
       <div class="consensus-row">
         <span class="consensus-label">Signal</span>
         <div class="signal-bar"><div class="signal-fill" style="width:${signalPct}%;background:${signalBarColor}"></div></div>
         <span class="consensus-val" style="color:${signalBarColor}">${signal}</span>
-      </div>
+      </div>` : ''}
+      ${hasDcfTarget && price > 0 && target > 0 ? `
       <div class="consensus-row">
-        <span class="consensus-label">Valuation</span>
+        <span class="consensus-label">DCF</span>
         <div class="signal-bar"><div class="signal-fill" style="width:${Math.min(100,Math.max(5, 50 + upsidePct))}%;background:${valBarColor}"></div></div>
         <span class="consensus-val" style="color:${valBarColor}">${valuation.split(' ')[0]}</span>
-      </div>
+      </div>` : ''}
     </div>`;
 }
 
@@ -1957,7 +2200,19 @@ function switchValTab(tab, el) {
   activeValTab = tab;
   document.querySelectorAll('#val-panel .val-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  if (valData && valData.query === currentQuery) renderValTab(tab);
+  if (valData && valData.query === currentQuery) {
+    renderValTab(tab);
+  } else {
+    // Show explicit loading state instead of silently rendering nothing
+    _track('tabClickNoData', tab);
+    document.getElementById('val-body').innerHTML = `
+      <div class="val-loading">
+        <div class="loading-bar" style="width:200px"><div class="loading-fill"></div></div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.1em;margin-top:8px">
+          ${currentQuery ? 'Loading ' + tab + ' for ' + currentQuery.toUpperCase() + '...' : 'Run a search first'}
+        </div>
+      </div>`;
+  }
 }
 
 async function loadFinancials(bodyId = 'fin-body') {
@@ -1985,7 +2240,7 @@ async function loadFinancials(bodyId = 'fin-body') {
           </tbody>
         </table>
         <div style="font-size:10px;color:var(--muted);margin-top:12px;font-family:'DM Mono',monospace">
-          Historical data requires Alpha Vantage — may be unavailable for this ticker
+          Source: Financial Modeling Prep · Multi-year statements unavailable for this ticker
         </div>
       </div>`;
     } else {
@@ -2593,9 +2848,15 @@ function renderWriteUp() {
     </div>`;
 }
 
-// ESC to close val panel (portfolio ESC handled in portfolio module)
+// ESC to close the top-most open panel (portfolio modal handled separately above)
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeValPanel();
+  if (e.key !== 'Escape') return;
+  // Portfolio modal takes priority — handled in its own listener
+  if (document.getElementById('port-modal').classList.contains('open')) return;
+  if (document.getElementById('qp-panel').classList.contains('open')) { closeQuickPitch(); return; }
+  if (document.getElementById('fin-panel').classList.contains('open')) { closeFinancialsPanel(); return; }
+  if (document.getElementById('fil-panel').classList.contains('open')) { closeFilingsPanel(); return; }
+  if (document.getElementById('val-panel').classList.contains('open')) { closeValPanel(); return; }
 });
 
 // ── Portfolio init ───────────────────────────────────────────────────────────
