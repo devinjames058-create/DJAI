@@ -61,6 +61,32 @@ AMBER       = 'E09B3C'
 BLUE_INPUT  = '2E74B5'   # blue = hardcoded inputs (industry convention)
 YELLOW_FILL = 'FFF2CC'   # yellow = key assumptions
 
+# ── Template selector — mirrors JS pitchTemplateSelector ──────────────────────
+import re as _re
+
+_BANK_TICKERS = {
+    'GS','MS','JPM','BAC','C','WFC','BLK','BX','APO','KKR','ARES','CG','TPG',
+    'STT','BK','SCHW','COIN','IBKR','RJF','JEF','LAZ','EVR','HLI','PJT','MUFG',
+    'DB','UBS','HSBC','BCS','TD','BMO','RY','CM','FITB','RF','HBAN','CFG',
+}
+_BANK_SECTOR_RE = _re.compile(
+    r'financial|bank|invest.*bank|brokerage|asset manag|capital market|broker.dealer',
+    _re.IGNORECASE
+)
+
+def select_template(data: dict) -> str:
+    """Return 'bank_financials' or 'generic_corporate' based on payload."""
+    ticker = str(data.get('ticker') or '').upper().split()[0].replace('-','')
+    sector = str(data.get('sector') or '')
+    family = str(data.get('templateFamily') or '')
+    if (
+        ticker in _BANK_TICKERS
+        or _BANK_SECTOR_RE.search(sector)
+        or family == 'bank_financials'
+    ):
+        return 'bank_financials'
+    return 'generic_corporate'
+
 # ── HTTP handler ───────────────────────────────────────────────────────────────
 class ArtifactHandler(http.server.BaseHTTPRequestHandler):
 
@@ -289,13 +315,15 @@ def _set(ws, row, col, value, bold=False, size=10, color=None, fill=None,
 
 # ── Excel DCF Model ────────────────────────────────────────────────────────────
 def generate_excel(data: dict, ticker: str, today: str, out_path: Path):
-    km   = data.get('keyMetrics') or {}
-    dcf  = data.get('dcf') or {}
-    comp = data.get('comps') or []
-    wacc = float(dcf.get('wacc') or 0.09)
-    tgr  = float(dcf.get('terminalGrowth') or 0.025)
-    imp  = float(dcf.get('impliedPrice') or 0)
-    cur  = float(data.get('currentPrice') or 0)
+    km       = data.get('keyMetrics') or {}
+    dcf      = data.get('dcf') or {}
+    comp     = data.get('comps') or []
+    hist_fin = data.get('historicalFinancials') or []
+    wacc     = float(dcf.get('wacc') or 0.09)
+    tgr      = float(dcf.get('terminalGrowth') or 0.025)
+    imp      = float(dcf.get('impliedPrice') or 0)
+    cur      = float(data.get('currentPrice') or 0)
+    template = select_template(data)
 
     wb = openpyxl.Workbook()
 
@@ -331,10 +359,16 @@ def generate_excel(data: dict, ticker: str, today: str, out_path: Path):
     for col, hdr in enumerate(['METRIC', 'VALUE', 'METRIC', 'VALUE', ''], start=1):
         _set(ws1, 8, col, hdr, bold=True, size=8, color=WHITE, fill=NAVY, align='center')
 
-    metrics_left  = [('Revenue', km.get('revenue','')), ('Rev Growth', km.get('revenueGrowth','')),
-                     ('Gross Margin', km.get('grossMargin','')), ('Op Margin', km.get('operatingMargin',''))]
-    metrics_right = [('Net Margin', km.get('netMargin','')), ('FCF', km.get('fcf','')),
-                     ('P/E', km.get('pe','')), ('Fwd P/E', km.get('forwardPe',''))]
+    if template == 'bank_financials':
+        metrics_left  = [('Revenue', km.get('revenue','')), ('ROTCE', km.get('rotce','')),
+                         ('CET1 Ratio', km.get('cet1','')), ('Efficiency Ratio', km.get('efficiencyRatio',''))]
+        metrics_right = [('Net Margin', km.get('netMargin','')), ('P/TBV', km.get('ptbv','')),
+                         ('P/E', km.get('pe','')), ('Dividend Yield', km.get('dividendYield',''))]
+    else:
+        metrics_left  = [('Revenue', km.get('revenue','')), ('Rev Growth', km.get('revenueGrowth','')),
+                         ('Gross Margin', km.get('grossMargin','')), ('Op Margin', km.get('operatingMargin',''))]
+        metrics_right = [('Net Margin', km.get('netMargin','')), ('FCF', km.get('fcf','')),
+                         ('P/E', km.get('pe','')), ('Fwd P/E', km.get('forwardPe',''))]
     for i, (lbl, val) in enumerate(metrics_left):
         row = 9 + i
         _set(ws1, row, 1, lbl, size=9, color=OFF_WHITE)
@@ -386,137 +420,252 @@ def generate_excel(data: dict, ticker: str, today: str, out_path: Path):
 
     ws1.sheet_view.showGridLines = False
 
-    # ── Sheet 2: DCF Model ─────────────────────────────────────────────────────
-    ws2 = wb.create_sheet('DCF Model')
-    ws2.column_dimensions['A'].width = 30
-    for col in 'BCDEFG':
-        ws2.column_dimensions[col].width = 16
+    # ── Sheet 2: Valuation Model (template-dispatched) ────────────────────────
+    if template == 'bank_financials':
+        # ── Bank Valuation: P/TBV analysis + DDM framework ────────────────────
+        ws2 = wb.create_sheet('Bank Valuation')
+        ws2.column_dimensions['A'].width = 32
+        for col in 'BCDEFG':
+            ws2.column_dimensions[col].width = 16
 
-    ws2.merge_cells('A1:G1')
-    _set(ws2, 1, 1, f'DCF MODEL — {ticker}', bold=True, size=13, color=GOLD_LIGHT, fill=NAVY, align='center')
-    ws2.row_dimensions[1].height = 26
+        ws2.merge_cells('A1:G1')
+        _set(ws2, 1, 1, f'BANK VALUATION — {ticker}', bold=True, size=13,
+             color=GOLD_LIGHT, fill=NAVY, align='center')
+        ws2.row_dimensions[1].height = 26
 
-    ws2.merge_cells('A2:G2')
-    _set(ws2, 2, 1,
-         '⚠  Simplified projection — not a full DCF model.  '
-         'AI-estimated assumptions; verify before use.',
-         size=8, color=AMBER, fill=SURFACE, italic=True, align='center')
-    ws2.row_dimensions[2].height = 16
+        ws2.merge_cells('A2:G2')
+        _set(ws2, 2, 1,
+             '⚠  Traditional FCF DCF is not applicable for banks. '
+             'Use P/TBV multiple analysis and DDM as primary valuation frameworks.',
+             size=8, color=AMBER, fill=SURFACE, italic=True, align='center')
+        ws2.row_dimensions[2].height = 16
 
-    # Assumptions block (yellow = user-editable inputs)
-    _set(ws2, 3, 1, 'KEY ASSUMPTIONS', bold=True, size=9, color=GOLD, fill=SURFACE)
-    assumptions = [
-        ('WACC',                 wacc,      '0.00%'),
-        ('Terminal Growth Rate', tgr,       '0.00%'),
-        ('Implied Price (DCF)',  imp,       '"$"#,##0.00'),
-        ('Current Price',        cur,       '"$"#,##0.00'),
-        ('DCF Upside / (Downside)', (imp - cur) / cur if cur else 0, '0.0%'),
-    ]
-    for i, (lbl, val, fmt) in enumerate(assumptions):
-        row = 4 + i
-        _set(ws2, row, 1, lbl, size=9, color=OFF_WHITE)
-        cell = ws2.cell(row=row, column=2, value=val)
-        cell.font      = _font(size=9, color=BLUE_INPUT, bold=True)
-        cell.fill      = _fill(YELLOW_FILL)
-        cell.alignment = _align(h='right')
-        cell.number_format = fmt
+        # Key bank metrics block
+        _set(ws2, 4, 1, 'KEY BANK METRICS', bold=True, size=9, color=GOLD, fill=SURFACE)
+        bank_items = [
+            ('ROTCE',           km.get('rotce','')),
+            ('CET1 Capital Ratio', km.get('cet1','')),
+            ('Efficiency Ratio', km.get('efficiencyRatio','')),
+            ('Net Margin',      km.get('netMargin','')),
+            ('Dividend Yield',  km.get('dividendYield','')),
+            ('Book Value / Share', km.get('bookValuePerShare','')),
+        ]
+        for i, (lbl, val) in enumerate(bank_items):
+            row = 5 + i
+            _set(ws2, row, 1, lbl, size=9, color=OFF_WHITE)
+            cell = ws2.cell(row=row, column=2, value=str(val) if val else '—')
+            cell.font      = _font(size=9, color=GOLD_LIGHT, bold=True)
+            cell.alignment = _align(h='right')
 
-    # Revenue projections (built from keyMetrics base + simple growth model)
-    rev_base_str = str(km.get('revenue', '') or '').replace('$','').replace('B','').replace('M','').strip()
-    try:
-        rev_multiplier = 1e9 if 'B' in str(km.get('revenue','')) else 1e6
-        rev_base = float(rev_base_str) * rev_multiplier
-    except (ValueError, TypeError):
+        # P/TBV Analysis
+        row = 13
+        _set(ws2, row, 1, 'P/TBV MULTIPLE ANALYSIS', bold=True, size=9, color=GOLD, fill=SURFACE)
+        try:
+            ptbv_current = float(str(km.get('ptbv',0) or 0).replace('x',''))
+        except (ValueError, TypeError):
+            ptbv_current = 0.0
+        ptbv_scenarios = [
+            ('Bear (0.8x TBV)',   0.8),
+            ('Base (1.0x TBV)',   1.0),
+            ('Bull (1.3x TBV)',   1.3),
+            ('Premium (1.6x TBV)', 1.6),
+        ]
+        _set(ws2, row + 1, 1, 'Scenario', bold=True, size=8, color=WHITE, fill=NAVY, align='center')
+        _set(ws2, row + 1, 2, 'P/TBV Multiple', bold=True, size=8, color=WHITE, fill=NAVY, align='center')
+        _set(ws2, row + 1, 3, 'vs. Current P/TBV', bold=True, size=8, color=WHITE, fill=NAVY, align='center')
+        for i, (scen, mult) in enumerate(ptbv_scenarios):
+            r = row + 2 + i
+            delta = f'{((mult / ptbv_current - 1) * 100):+.0f}%' if ptbv_current else '—'
+            is_base = (mult == 1.0)
+            fill = NAVY_LIGHT if is_base else SURFACE
+            c_color = GOLD if is_base else OFF_WHITE
+            _set(ws2, r, 1, scen, size=9, color=c_color, fill=fill)
+            cell = ws2.cell(row=r, column=2, value=f'{mult:.1f}x')
+            cell.font = _font(size=9, color=GOLD_LIGHT if is_base else WHITE, bold=is_base)
+            cell.fill = _fill(fill)
+            cell.alignment = _align(h='right')
+            _set(ws2, r, 3, delta, size=9, color=GREEN if not str(delta).startswith('-') else RED,
+                 fill=fill, align='right')
+
+        # DDM Framework note
+        row = row + 2 + len(ptbv_scenarios) + 2
+        ws2.merge_cells(f'A{row}:G{row}')
+        _set(ws2, row, 1, 'DIVIDEND DISCOUNT MODEL (DDM) FRAMEWORK', bold=True,
+             size=9, color=GOLD, fill=SURFACE)
+        ddm_note = (
+            'For banks, DDM values the firm based on sustainable dividend capacity. '
+            'P₀ = D₁ / (Ke − g), where D₁ = next dividend, Ke = cost of equity, g = sustainable growth rate. '
+            f'ROTCE of {km.get("rotce","—")} × retention ratio ≈ sustainable ROE-based growth. '
+            f'Current dividend yield: {km.get("dividendYield","—")}. '
+            'Refine with consensus DPS estimates for a bottom-up DDM.'
+        )
+        row += 1
+        ws2.merge_cells(f'A{row}:G{row + 1}')
+        cell = ws2.cell(row=row, column=1, value=ddm_note)
+        cell.font = _font(size=9, color=OFF_WHITE, italic=True)
+        cell.alignment = _align(wrap=True)
+        ws2.row_dimensions[row].height = 32
+
+        ws2.sheet_view.showGridLines = False
+
+    else:
+        # ── Corporate DCF Model ────────────────────────────────────────────────
+        ws2 = wb.create_sheet('DCF Model')
+        ws2.column_dimensions['A'].width = 30
+        for col in 'BCDEFG':
+            ws2.column_dimensions[col].width = 16
+
+        ws2.merge_cells('A1:G1')
+        _set(ws2, 1, 1, f'DCF MODEL — {ticker}', bold=True, size=13,
+             color=GOLD_LIGHT, fill=NAVY, align='center')
+        ws2.row_dimensions[1].height = 26
+
+        ws2.merge_cells('A2:G2')
+        _set(ws2, 2, 1,
+             '⚠  Simplified projection — not a full DCF model.  '
+             'AI-estimated assumptions; verify before use.',
+             size=8, color=AMBER, fill=SURFACE, italic=True, align='center')
+        ws2.row_dimensions[2].height = 16
+
+        # Assumptions block (yellow = user-editable inputs)
+        _set(ws2, 3, 1, 'KEY ASSUMPTIONS', bold=True, size=9, color=GOLD, fill=SURFACE)
+        assumptions = [
+            ('WACC',                    wacc, '0.00%'),
+            ('Terminal Growth Rate',    tgr,  '0.00%'),
+            ('Implied Price (DCF)',      imp,  '"$"#,##0.00'),
+            ('Current Price',           cur,  '"$"#,##0.00'),
+            ('DCF Upside / (Downside)', (imp - cur) / cur if cur else 0, '0.0%'),
+        ]
+        for i, (lbl, val, fmt) in enumerate(assumptions):
+            row = 4 + i
+            _set(ws2, row, 1, lbl, size=9, color=OFF_WHITE)
+            cell = ws2.cell(row=row, column=2, value=val)
+            cell.font      = _font(size=9, color=BLUE_INPUT, bold=True)
+            cell.fill      = _fill(YELLOW_FILL)
+            cell.alignment = _align(h='right')
+            cell.number_format = fmt
+
+        # Revenue base: use historicalFinancials most recent year when available
         rev_base = 0.0
-    rev_growth_str = str(km.get('revenueGrowth', '') or '').replace('%','').strip()
-    try:
-        rev_growth = float(rev_growth_str) / 100
-    except (ValueError, TypeError):
         rev_growth = 0.06
-    op_margin_str = str(km.get('operatingMargin', '') or '').replace('%','').strip()
-    try:
-        op_margin = float(op_margin_str) / 100
-    except (ValueError, TypeError):
-        op_margin = 0.15
+        if hist_fin:
+            try:
+                hf = hist_fin[0]
+                rev_base   = float(hf.get('revenue') or 0)
+                prev_rev   = float((hist_fin[1] if len(hist_fin) > 1 else {}).get('revenue') or 0)
+                if prev_rev:
+                    rev_growth = (rev_base - prev_rev) / prev_rev
+            except (ValueError, TypeError, IndexError):
+                pass
+        if not rev_base:
+            rev_base_str = str(km.get('revenue', '') or '').replace('$','').replace('B','').replace('M','').strip()
+            try:
+                rev_multiplier = 1e9 if 'B' in str(km.get('revenue','')) else 1e6
+                rev_base = float(rev_base_str) * rev_multiplier
+            except (ValueError, TypeError):
+                rev_base = 0.0
+        if not rev_growth:
+            rev_growth_str = str(km.get('revenueGrowth', '') or '').replace('%','').strip()
+            try:
+                rev_growth = float(rev_growth_str) / 100
+            except (ValueError, TypeError):
+                rev_growth = 0.06
+        op_margin_str = str(km.get('operatingMargin', '') or '').replace('%','').strip()
+        try:
+            op_margin = float(op_margin_str) / 100
+        except (ValueError, TypeError):
+            op_margin = 0.15
+        # Clamp to sane range
+        rev_growth = max(-0.30, min(rev_growth, 0.60))
+        op_margin  = max(0.0,   min(op_margin,  0.60))
 
-    row = 11
-    _set(ws2, row, 1, 'REVENUE & FCF PROJECTIONS', bold=True, size=9, color=GOLD, fill=SURFACE)
-    hdrs = ['Metric'] + [str(2025 + i) for i in range(5)]
-    for c, h in enumerate(hdrs, start=1):
-        _set(ws2, row + 1, c, h, bold=True, size=8, color=WHITE, fill=NAVY, align='center')
-    ws2.row_dimensions[row + 1].height = 15
+        row = 11
+        _set(ws2, row, 1, 'REVENUE & FCF PROJECTIONS', bold=True, size=9, color=GOLD, fill=SURFACE)
+        hdrs = ['Metric'] + [str(2025 + i) for i in range(5)]
+        for c, h in enumerate(hdrs, start=1):
+            _set(ws2, row + 1, c, h, bold=True, size=8, color=WHITE, fill=NAVY, align='center')
+        ws2.row_dimensions[row + 1].height = 15
 
-    years_data = []
-    rev = rev_base
-    for i in range(5):
-        rev  = rev * (1 + rev_growth) if i > 0 else rev * (1 + rev_growth)
-        fcf  = rev * op_margin * 0.7   # rough: op income × (1 - tax) as FCF proxy
-        df   = 1 / ((1 + wacc) ** (i + 1))
-        pv   = fcf * df
-        years_data.append({'rev': rev, 'fcf': fcf, 'df': df, 'pv': pv})
+        years_data = []
+        rev = rev_base
+        for i in range(5):
+            rev  = rev * (1 + rev_growth)
+            fcf  = rev * op_margin * 0.7   # op income × (1 − tax) as FCF proxy
+            df   = 1 / ((1 + wacc) ** (i + 1))
+            pv   = fcf * df
+            years_data.append({'rev': rev, 'fcf': fcf, 'df': df, 'pv': pv})
 
-    proj_rows = [
-        ('Revenue ($B)',         [f'{y["rev"]/1e9:.2f}' for y in years_data]),
-        ('FCF ($B)',             [f'{y["fcf"]/1e9:.2f}' for y in years_data]),
-        ('Discount Factor',      [f'{y["df"]:.4f}'      for y in years_data]),
-        ('PV of FCF ($B)',       [f'{y["pv"]/1e9:.2f}'  for y in years_data]),
-    ]
-    for ri, (lbl, vals) in enumerate(proj_rows):
-        r = row + 2 + ri
-        _set(ws2, r, 1, lbl, size=9, color=OFF_WHITE)
-        for ci, v in enumerate(vals, start=2):
-            _set(ws2, r, ci, v, size=9, color=WHITE, align='right')
+        # Show historical FCF anchor if available
+        if hist_fin:
+            hist_label_row = row - 1
+            ws2.merge_cells(f'A{hist_label_row}:G{hist_label_row}')
+            hist_note = 'Historical anchor (Alpha Vantage): ' + '  |  '.join(
+                f'{h.get("year","?")}: Rev ${h.get("revenue",0)/1e9:.1f}B  FCF ${(h.get("freeCashflow") or 0)/1e9:.1f}B'
+                for h in hist_fin[:3] if h.get('revenue')
+            )
+            _set(ws2, hist_label_row, 1, hist_note, size=7, color=GOLD, italic=True, fill=SURFACE)
 
-    total_pv   = sum(y['pv'] for y in years_data)
-    last_fcf   = years_data[-1]['fcf'] * (1 + tgr)
-    term_val   = last_fcf / (wacc - tgr) if (wacc - tgr) > 0 else 0
-    pv_term    = term_val / ((1 + wacc) ** 5)
-    r = row + 6
-    for lbl, val, fmt in [
-        ('Sum of PV (FCF)',        total_pv,          '"$"#,##0,,,"B"'),
-        ('Terminal Value',         term_val,           '"$"#,##0,,,"B"'),
-        ('PV of Terminal Value',   pv_term,            '"$"#,##0,,,"B"'),
-        ('Total Enterprise Value', total_pv + pv_term, '"$"#,##0,,,"B"'),
-    ]:
-        _set(ws2, r, 1, lbl, size=9, color=OFF_WHITE)
-        cell = ws2.cell(row=r, column=2, value=round(val, 2))
-        cell.font = _font(size=9, color=GOLD_LIGHT, bold=True)
-        cell.alignment = _align(h='right')
-        cell.number_format = fmt
-        r += 1
+        proj_rows = [
+            ('Revenue ($B)',    [f'{y["rev"]/1e9:.2f}' for y in years_data]),
+            ('FCF ($B)',        [f'{y["fcf"]/1e9:.2f}' for y in years_data]),
+            ('Discount Factor', [f'{y["df"]:.4f}'      for y in years_data]),
+            ('PV of FCF ($B)',  [f'{y["pv"]/1e9:.2f}'  for y in years_data]),
+        ]
+        for ri, (lbl, vals) in enumerate(proj_rows):
+            r = row + 2 + ri
+            _set(ws2, r, 1, lbl, size=9, color=OFF_WHITE)
+            for ci, v in enumerate(vals, start=2):
+                _set(ws2, r, ci, v, size=9, color=WHITE, align='right')
 
-    # Sensitivity table: WACC (rows) × TGR (columns) → implied price relative change
-    row = r + 2
-    ws2.merge_cells(f'A{row}:G{row}')
-    _set(ws2, row, 1, 'SENSITIVITY — Implied Price vs. WACC × Terminal Growth Rate',
-         bold=True, size=9, color=GOLD, fill=SURFACE)
-    row += 1
-    wacc_steps = [-0.02, -0.01, 0, 0.01, 0.02]
-    tgr_steps  = [-0.005, 0, 0.005, 0.010, 0.015]
-    _set(ws2, row, 1, 'WACC \\ TGR', bold=True, size=8, color=WHITE, fill=NAVY, align='center')
-    for ci, ts in enumerate(tgr_steps, start=2):
-        _set(ws2, row, ci, f'{(tgr+ts)*100:.1f}%', bold=True, size=8, color=WHITE, fill=NAVY, align='center')
-    for ri, ws in enumerate(wacc_steps):
-        r2 = row + 1 + ri
-        _set(ws2, r2, 1, f'{(wacc+ws)*100:.1f}%', bold=True, size=8, color=GOLD_LIGHT, fill=NAVY_LIGHT)
+        total_pv = sum(y['pv'] for y in years_data)
+        last_fcf = years_data[-1]['fcf'] * (1 + tgr)
+        term_val = last_fcf / (wacc - tgr) if (wacc - tgr) > 0 else 0
+        pv_term  = term_val / ((1 + wacc) ** 5)
+        r = row + 6
+        for lbl, val, fmt in [
+            ('Sum of PV (FCF)',        total_pv,           '"$"#,##0,,,"B"'),
+            ('Terminal Value',         term_val,           '"$"#,##0,,,"B"'),
+            ('PV of Terminal Value',   pv_term,            '"$"#,##0,,,"B"'),
+            ('Total Enterprise Value', total_pv + pv_term, '"$"#,##0,,,"B"'),
+        ]:
+            _set(ws2, r, 1, lbl, size=9, color=OFF_WHITE)
+            cell = ws2.cell(row=r, column=2, value=round(val, 2))
+            cell.font = _font(size=9, color=GOLD_LIGHT, bold=True)
+            cell.alignment = _align(h='right')
+            cell.number_format = fmt
+            r += 1
+
+        # Sensitivity table: WACC × TGR → implied price
+        row = r + 2
+        ws2.merge_cells(f'A{row}:G{row}')
+        _set(ws2, row, 1, 'SENSITIVITY — Implied Price vs. WACC × Terminal Growth Rate',
+             bold=True, size=9, color=GOLD, fill=SURFACE)
+        row += 1
+        wacc_steps = [-0.02, -0.01, 0, 0.01, 0.02]
+        tgr_steps  = [-0.005, 0, 0.005, 0.010, 0.015]
+        _set(ws2, row, 1, 'WACC \\ TGR', bold=True, size=8, color=WHITE, fill=NAVY, align='center')
         for ci, ts in enumerate(tgr_steps, start=2):
-            adj_wacc = wacc + ws
-            adj_tgr  = tgr  + ts
-            if adj_wacc > adj_tgr and adj_wacc > 0:
-                # Scale implied price by spread ratio
-                base_spread = wacc - tgr
-                new_spread  = adj_wacc - adj_tgr
-                adj_price   = imp * base_spread / new_spread if new_spread > 0 else 0
-            else:
-                adj_price = 0
-            is_base = (ws == 0 and ts == 0)
-            cell = ws2.cell(row=r2, column=ci, value=round(adj_price, 2))
-            cell.font   = _font(size=9, color=NAVY if is_base else OFF_WHITE, bold=is_base)
-            cell.fill   = _fill(GOLD if is_base else SURFACE)
-            cell.alignment = _align(h='center')
-            cell.number_format = '"$"#,##0.00'
+            _set(ws2, row, ci, f'{(tgr+ts)*100:.1f}%', bold=True, size=8, color=WHITE, fill=NAVY, align='center')
+        for ri, ws in enumerate(wacc_steps):
+            r2 = row + 1 + ri
+            _set(ws2, r2, 1, f'{(wacc+ws)*100:.1f}%', bold=True, size=8, color=GOLD_LIGHT, fill=NAVY_LIGHT)
+            for ci, ts in enumerate(tgr_steps, start=2):
+                adj_wacc = wacc + ws
+                adj_tgr  = tgr  + ts
+                if adj_wacc > adj_tgr and adj_wacc > 0:
+                    base_spread = wacc - tgr
+                    new_spread  = adj_wacc - adj_tgr
+                    adj_price   = imp * base_spread / new_spread if new_spread > 0 else 0
+                else:
+                    adj_price = 0
+                is_base = (ws == 0 and ts == 0)
+                cell = ws2.cell(row=r2, column=ci, value=round(adj_price, 2))
+                cell.font   = _font(size=9, color=NAVY if is_base else OFF_WHITE, bold=is_base)
+                cell.fill   = _fill(GOLD if is_base else SURFACE)
+                cell.alignment = _align(h='center')
+                cell.number_format = '"$"#,##0.00'
 
-    ws2.sheet_view.showGridLines = False
+        ws2.sheet_view.showGridLines = False
 
     # ── Sheet 3: Comps ─────────────────────────────────────────────────────────
     ws3 = wb.create_sheet('Comps')
@@ -532,7 +681,10 @@ def generate_excel(data: dict, ticker: str, today: str, out_path: Path):
          color=GOLD_LIGHT, fill=NAVY, align='center')
     ws3.row_dimensions[1].height = 26
 
-    comp_hdrs = ['Company', 'Ticker', 'EV/EBITDA', 'P/E', 'P/S', 'Premium / Discount']
+    if template == 'bank_financials':
+        comp_hdrs = ['Company', 'Ticker', 'P/TBV', 'P/E', 'ROTCE', 'Premium / Discount']
+    else:
+        comp_hdrs = ['Company', 'Ticker', 'EV/EBITDA', 'P/E', 'P/S', 'Premium / Discount']
     for ci, h in enumerate(comp_hdrs, start=1):
         _set(ws3, 3, ci, h, bold=True, size=9, color=WHITE, fill=NAVY, align='center')
 
@@ -543,21 +695,29 @@ def generate_excel(data: dict, ticker: str, today: str, out_path: Path):
         prem_color = GREEN if is_pos else RED
         _set(ws3, row, 1, c.get('name', ''), size=9, color=OFF_WHITE)
         _set(ws3, row, 2, c.get('ticker', ''), size=9, color=GOLD, align='center')
-        _set(ws3, row, 3, c.get('evEbitda', c.get('evEbitda', '')), size=9, color=OFF_WHITE, align='right')
-        _set(ws3, row, 4, c.get('pe', ''), size=9, color=OFF_WHITE, align='right')
-        _set(ws3, row, 5, c.get('ps', ''), size=9, color=OFF_WHITE, align='right')
+        if template == 'bank_financials':
+            _set(ws3, row, 3, c.get('ptbv', c.get('evEbitda', '')), size=9, color=OFF_WHITE, align='right')
+            _set(ws3, row, 4, c.get('pe', ''), size=9, color=OFF_WHITE, align='right')
+            _set(ws3, row, 5, c.get('rotce', c.get('ps', '')), size=9, color=OFF_WHITE, align='right')
+        else:
+            _set(ws3, row, 3, c.get('evEbitda', ''), size=9, color=OFF_WHITE, align='right')
+            _set(ws3, row, 4, c.get('pe', ''), size=9, color=OFF_WHITE, align='right')
+            _set(ws3, row, 5, c.get('ps', ''), size=9, color=OFF_WHITE, align='right')
         _set(ws3, row, 6, prem, size=9, color=prem_color, align='right')
 
     # Subject row
     sub_row = 4 + len(comp or []) + 1
     _set(ws3, sub_row, 1, f'{ticker} (Subject)', bold=True, size=9, color=GOLD_LIGHT, fill=NAVY_LIGHT)
     _set(ws3, sub_row, 2, ticker, bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='center')
-    km_evEbitda = km.get('evEbitda', '')
-    km_pe       = km.get('pe', '')
-    _set(ws3, sub_row, 3, km_evEbitda, bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
-    _set(ws3, sub_row, 4, km_pe,       bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
-    _set(ws3, sub_row, 5, '—',         bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
-    _set(ws3, sub_row, 6, '—',         bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
+    if template == 'bank_financials':
+        _set(ws3, sub_row, 3, km.get('ptbv', ''),   bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
+        _set(ws3, sub_row, 4, km.get('pe', ''),      bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
+        _set(ws3, sub_row, 5, km.get('rotce', ''),   bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
+    else:
+        _set(ws3, sub_row, 3, km.get('evEbitda', ''), bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
+        _set(ws3, sub_row, 4, km.get('pe', ''),       bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
+        _set(ws3, sub_row, 5, '—',                    bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
+    _set(ws3, sub_row, 6, '—', bold=True, size=9, color=GOLD, fill=NAVY_LIGHT, align='right')
 
     ws3.sheet_view.showGridLines = False
 
@@ -612,16 +772,17 @@ def _add_rect(slide, left, top, width, height, fill_hex, line_hex=None):
 
 # ── PowerPoint Pitch Deck ─────────────────────────────────────────────────────
 def generate_pptx(data: dict, ticker: str, today: str, out_path: Path):
-    km   = data.get('keyMetrics') or {}
-    dcf  = data.get('dcf') or {}
-    comp = data.get('comps') or []
-    bull = data.get('bull') or []
-    bear = data.get('bear') or []
-    cats = data.get('catalysts') or []
-    rating  = data.get('rating', 'HOLD')
-    target  = data.get('targetPrice', '')
-    current = data.get('currentPrice', '')
-    upside  = data.get('upside', '')
+    km       = data.get('keyMetrics') or {}
+    dcf      = data.get('dcf') or {}
+    comp     = data.get('comps') or []
+    bull     = data.get('bull') or []
+    bear     = data.get('bear') or []
+    cats     = data.get('catalysts') or []
+    rating   = data.get('rating', 'HOLD')
+    target   = data.get('targetPrice', '')
+    current  = data.get('currentPrice', '')
+    upside   = data.get('upside', '')
+    template = select_template(data)
     rating_color = GREEN if rating == 'BUY' else (RED if rating == 'SELL' else AMBER)
 
     prs = Presentation()
@@ -685,20 +846,36 @@ def generate_pptx(data: dict, ticker: str, today: str, out_path: Path):
     _add_textbox(s3, 0.4, 0.2, 12.0, 0.5, 'Financial Snapshot',
                  size=20, bold=True, color=GOLD)
 
-    metrics_grid = [
-        ('Revenue',     km.get('revenue','')),
-        ('Rev Growth',  km.get('revenueGrowth','')),
-        ('Gross Margin',km.get('grossMargin','')),
-        ('Op Margin',   km.get('operatingMargin','')),
-        ('Net Margin',  km.get('netMargin','')),
-        ('FCF',         km.get('fcf','')),
-        ('P/E',         km.get('pe','')),
-        ('Fwd P/E',     km.get('forwardPe','')),
-        ('EV/EBITDA',   km.get('evEbitda','')),
-        ('ROE',         km.get('roe','')),
-        ('Beta',        km.get('beta','')),
-        ('Analyst Target', f'${target}' if target else ''),
-    ]
+    if template == 'bank_financials':
+        metrics_grid = [
+            ('Revenue',        km.get('revenue','')),
+            ('Rev Growth',     km.get('revenueGrowth','')),
+            ('Net Margin',     km.get('netMargin','')),
+            ('ROTCE',          km.get('rotce','')),
+            ('CET1 Ratio',     km.get('cet1','')),
+            ('Efficiency Ratio', km.get('efficiencyRatio','')),
+            ('P/E',            km.get('pe','')),
+            ('Fwd P/E',        km.get('forwardPe','')),
+            ('P/TBV',          km.get('ptbv','')),
+            ('Dividend Yield', km.get('dividendYield','')),
+            ('Beta',           km.get('beta','')),
+            ('Analyst Target', f'${target}' if target else ''),
+        ]
+    else:
+        metrics_grid = [
+            ('Revenue',     km.get('revenue','')),
+            ('Rev Growth',  km.get('revenueGrowth','')),
+            ('Gross Margin',km.get('grossMargin','')),
+            ('Op Margin',   km.get('operatingMargin','')),
+            ('Net Margin',  km.get('netMargin','')),
+            ('FCF',         km.get('fcf','')),
+            ('P/E',         km.get('pe','')),
+            ('Fwd P/E',     km.get('forwardPe','')),
+            ('EV/EBITDA',   km.get('evEbitda','')),
+            ('ROE',         km.get('roe','')),
+            ('Beta',        km.get('beta','')),
+            ('Analyst Target', f'${target}' if target else ''),
+        ]
     cols = 4
     cell_w, cell_h = 3.1, 0.75
     for idx, (lbl, val) in enumerate(metrics_grid):
@@ -719,15 +896,26 @@ def generate_pptx(data: dict, ticker: str, today: str, out_path: Path):
     _add_textbox(s4, 0.4, 0.2, 12.0, 0.5, 'Valuation',
                  size=20, bold=True, color=GOLD)
 
-    val_items = [
-        ('DCF Implied Price', f'${dcf.get("impliedPrice","—")}'),
-        ('WACC',              f'{dcf.get("wacc","")}'),
-        ('Terminal Growth',   f'{dcf.get("terminalGrowth","")}'),
-        ('Current Price',     f'${current}'),
-        ('Upside / (Downside)', upside),
-        ('Analyst Target',    f'${target}'),
-        ('Rating',            rating),
-    ]
+    if template == 'bank_financials':
+        val_items = [
+            ('P/TBV (Current)',     km.get('ptbv', '—')),
+            ('ROTCE',               km.get('rotce', '—')),
+            ('CET1 Ratio',          km.get('cet1', '—')),
+            ('Efficiency Ratio',    km.get('efficiencyRatio', '—')),
+            ('Dividend Yield',      km.get('dividendYield', '—')),
+            ('Current Price',       f'${current}'),
+            ('Analyst Target',      f'${target}'),
+        ]
+    else:
+        val_items = [
+            ('DCF Implied Price',   f'${dcf.get("impliedPrice","—")}'),
+            ('WACC',                f'{dcf.get("wacc","")}'),
+            ('Terminal Growth',     f'{dcf.get("terminalGrowth","")}'),
+            ('Current Price',       f'${current}'),
+            ('Upside / (Downside)', upside),
+            ('Analyst Target',      f'${target}'),
+            ('Rating',              rating),
+        ]
     for i, (lbl, val) in enumerate(val_items):
         y = 0.9 + i * 0.7
         _add_rect(s4, 0.4, y, 5.5, 0.55, SURFACE, NAVY_LIGHT)
@@ -735,8 +923,19 @@ def generate_pptx(data: dict, ticker: str, today: str, out_path: Path):
         _add_textbox(s4, 4.0, y + 0.05, 1.8, 0.45, str(val), size=11,
                      bold=True, color=WHITE, align=PP_ALIGN.RIGHT)
 
-    section_label(s4, 'VALUATION SUMMARY', top=0.9)
-    body_text(s4, data.get('valSummary', ''), 6.5, 0.9, 6.4, 4.5, size=10)
+    if template == 'bank_financials':
+        section_label(s4, 'VALUATION FRAMEWORK', top=0.9)
+        bank_val_note = (
+            'Bank Valuation: P/TBV and DDM are the primary frameworks. '
+            'Traditional EV/EBITDA or FCF DCF is not applicable. '
+            f'Current P/TBV: {km.get("ptbv","—")}. '
+            f'ROTCE: {km.get("rotce","—")} drives sustainable book value growth. '
+            f'Efficiency ratio: {km.get("efficiencyRatio","—")} (lower = better). '
+        )
+        body_text(s4, bank_val_note + '\n\n' + data.get('valSummary', ''), 6.5, 0.9, 6.4, 4.5, size=10)
+    else:
+        section_label(s4, 'VALUATION SUMMARY', top=0.9)
+        body_text(s4, data.get('valSummary', ''), 6.5, 0.9, 6.4, 4.5, size=10)
 
     # ── Slide 5: Bull Case ────────────────────────────────────────────────────
     s5 = new_slide()

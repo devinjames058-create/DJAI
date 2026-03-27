@@ -1148,6 +1148,38 @@ function detectEntityType(query, liveData, aiType) {
   return { isStock, isForeign, isADR, ticker, entityLabel, type };
 }
 
+// ── Pitch template selector — determines artifact family for all companies ─────
+// Add new families here as plain objects without modifying existing logic
+const BANK_TICKERS_SET = new Set([
+  'GS','MS','JPM','BAC','C','WFC','BLK','BX','APO','KKR','ARES','CG','TPG',
+  'STT','BK','SCHW','COIN','IBKR','RJF','JEF','LAZ','EVR','HLI','PJT',
+  'MUFG','DB','UBS','HSBC','BCS','TD','BMO','RY','CM','FITB','RF','HBAN','CFG'
+]);
+
+function pitchTemplateSelector(entityType, sector, ticker) {
+  const t = (ticker || '').toUpperCase().split(' ')[0].replace(/[^A-Z.]/g, '');
+  const s = (sector || '').toLowerCase();
+  const isBankFamily = BANK_TICKERS_SET.has(t)
+    || /financial|bank|invest.*bank|brokerage|asset manag|capital market|broker.dealer/.test(s);
+
+  if (isBankFamily) {
+    return {
+      family: 'bank_financials',
+      promptKpiSchema: '"keyMetrics":{"revenue":"X.XB","revenueGrowth":"X.X%","netMargin":"X.X%","roe":"X.X%","pe":"X.Xx","forwardPe":"X.Xx","ptbv":"X.Xx","rotce":"X.X%","cet1":"X.X%","efficiencyRatio":"X.X%","bookValuePerShare":"$XXX","dividendYield":"X.X%"}',
+      promptHeader: 'SECTOR CONTEXT: This is a bank or financial institution. Key metrics: ROTCE, P/TBV, CET1 capital ratio, efficiency ratio, net interest margin, payout ratio. For comps prefer P/E and P/TBV over EV/EBITDA.\n\n',
+      promptDcfExtra: ',"modelNote":"Bank: DDM/P-TBV framework — traditional FCF DCF not reliable for financial institutions"',
+    };
+  }
+
+  // Default: generic corporate (tech, industrial, consumer, healthcare, foreign)
+  return {
+    family: 'generic_corporate',
+    promptKpiSchema: '"keyMetrics":{"revenue":"X.XB","revenueGrowth":"X.X%","grossMargin":"X.X%","operatingMargin":"X.X%","netMargin":"X.X%","fcf":"X.XB","pe":"X.Xx","forwardPe":"X.Xx","evEbitda":"X.Xx","roe":"X.X%","beta":"X.X"}',
+    promptHeader: '',
+    promptDcfExtra: '',
+  };
+}
+
 // ── Response quality score — 0-10 based on data coverage ─────────────────────
 function scoreResponse(r, liveData) {
   let score = 0;
@@ -1336,15 +1368,39 @@ function renderResults(query, r) {
 }
 
 function renderError(query, detail) {
+  // Classify error type for actionable guidance
+  const d = (detail || '').toLowerCase();
+  let errorTitle, errorGuide;
+  if (d.includes('abort') || d.includes('timeout') || d.includes('signal is aborted') || d.includes('timed out')) {
+    errorTitle = 'Request timed out';
+    errorGuide = 'Claude API took too long — likely rate-limited. Wait 30–60 seconds then retry.';
+  } else if (d.includes('rate') || d.includes('529') || d.includes('overload') || d.includes('too many')) {
+    errorTitle = 'API rate limit hit';
+    errorGuide = 'Claude API is overloaded. Wait 60 seconds then retry.';
+  } else if (d.includes('json') || d.includes('parse') || d.includes('unexpected token') || d.includes('no json')) {
+    errorTitle = 'Malformed response';
+    errorGuide = 'Claude returned an unexpected format. This is transient — retry usually resolves it immediately.';
+  } else if (d.includes('401') || d.includes('403') || d.includes('unauthorized') || d.includes('forbidden')) {
+    errorTitle = 'Authentication error';
+    errorGuide = 'API key invalid or expired. Verify ANTHROPIC_API_KEY in the Vercel dashboard → Settings → Environment Variables.';
+  } else if (d.includes('failed to fetch') || d.includes('networkerror') || d.includes('network') || d.includes('net::')) {
+    errorTitle = 'Network error';
+    errorGuide = 'Cannot reach the DJAI API. Check your internet connection and try again.';
+  } else {
+    errorTitle = 'Analysis failed';
+    errorGuide = 'An unexpected error occurred. Retry the search — if it persists, check Vercel function logs.';
+  }
+
   const center = document.getElementById('results-container');
   center.innerHTML = `
     <div class="results">
       <div class="results-header">
         <div class="results-header-left">
           <div class="results-query">${query}</div>
-          <div class="results-meta" style="color:var(--red)">Error</div>
+          <div class="results-meta" style="color:var(--red)">${errorTitle}</div>
         </div>
         <div class="results-actions">
+          <button class="val-trigger-btn" style="background:var(--surface2);color:var(--amber);border-color:rgba(224,155,60,0.4)" onclick="runSearch()">↺ Retry</button>
           <button class="val-trigger-btn" onclick="openValPanel('${query}')">◈ Valuation</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--blue);border-color:rgba(91,143,212,0.4)" onclick="openFinancialsPanel()">▤ Financials</button>
           <button class="val-trigger-btn" style="background:var(--surface2);color:var(--green);border-color:rgba(76,175,125,0.4)" onclick="openFilingsPanel()">⬡ Filings</button>
@@ -1353,11 +1409,10 @@ function renderError(query, detail) {
       </div>
       <div class="card">
         <div class="card-body">
-          <p style="font-size:12px;color:var(--muted2);line-height:1.7">Could not retrieve results. Check your API key and try again.<br><span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">${detail || ''}</span></p>
+          <p style="font-size:12px;color:var(--muted2);line-height:1.7">${errorGuide}<br><span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:4px;display:block">${detail || ''}</span></p>
         </div>
       </div>
     </div>`;
-  // btn reset handled by finally block in runSearch
 }
 
 async function askFollowUp() {
@@ -1487,9 +1542,38 @@ async function runQuickPitch(title) {
     ? 'LIVE DATA: ' + currentQuery + ' | Price $' + (q.price||liveData.price||'N/A') + ' | MktCap ' + (v.marketCap||liveData.marketCap||'N/A') + ' | PE ' + (v.pe||liveData.pe||'N/A') + ' | FwdPE ' + (v.forwardPE||'N/A') + ' | Revenue ' + (f.revenue||liveData.revenue||'N/A') + ' | GrossMargin ' + (f.grossMargin||'N/A') + ' | OpMargin ' + (f.operatingMargin||'N/A') + ' | FCF ' + (f.freeCashflow||'N/A') + ' | ROE ' + (f.returnOnEquity||'N/A') + ' | AnalystTarget ' + (a.targetMean||'N/A') + ' | Consensus ' + (a.recommendation||'N/A') + ' | ' + (a.numberOfAnalysts||0) + ' analysts | RFR ' + (macro.riskFreeRatePct||'4.3%') + (histStr ? ' | Historical: ' + histStr : '')
     : 'No live data — use best knowledge.';
 
+  // Template selection — determines prompt schema and artifact structure
+  var _sector = (liveData && liveData.profile) ? (liveData.profile.sector || '') : '';
+  var _template = pitchTemplateSelector(window._entityType || {}, _sector, currentQuery);
+  console.log('[DJAI] Pitch template:', _template.family, '|', currentQuery);
+
   body.innerHTML = renderSteps(1);
 
-  var pitchPrompt = 'You are a senior equity research analyst. Generate a comprehensive quick pitch for ' + title + ' (' + currentQuery + ').\n\n' + dataContext + '\n\nReturn ONLY valid JSON (no markdown):\n{\n  "ticker": "' + currentQuery + '",\n  "company": "' + title.replace(/"/g,"'") + '",\n  "rating": "BUY|HOLD|SELL",\n  "targetPrice": 0.00,\n  "currentPrice": 0.00,\n  "upside": "+X.X%",\n  "thesis": "One sharp differentiated investment thesis sentence.",\n  "keyMetrics": {"revenue":"X.XB","revenueGrowth":"X.X%","grossMargin":"X.X%","operatingMargin":"X.X%","netMargin":"X.X%","fcf":"X.XB","pe":"X.Xx","forwardPe":"X.Xx","evEbitda":"X.Xx","roe":"X.X%","beta":"X.X"},\n  "dcf": {"wacc":0.00,"terminalGrowth":0.025,"impliedPrice":0.00},\n  "comps": [{"name":"Peer 1","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"},{"name":"Peer 2","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"},{"name":"Peer 3","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"}],\n  "bull": ["Point 1","Point 2","Point 3"],\n  "bear": ["Risk 1","Risk 2","Risk 3"],\n  "catalysts": ["Catalyst 1","Catalyst 2","Catalyst 3"],\n  "businessOverview": "2-3 sentences.",\n  "financialAnalysis": "2-3 sentences.",\n  "valSummary": "2-3 sentences.",\n  "risks": "2 sentences.",\n  "conclusion": "2 sentences."\n}';
+  var pitchPrompt = 'You are a senior equity research analyst. Generate a comprehensive quick pitch for ' + title + ' (' + currentQuery + ').\n\n'
+    + _template.promptHeader
+    + dataContext
+    + '\n\nIMPORTANT: Use EXACTLY the live data values above for all numeric metrics where available. Do not override live PE, revenue, or price with your own estimates.\n\n'
+    + 'Return ONLY valid JSON (no markdown):\n'
+    + '{\n'
+    + '  "ticker": "' + currentQuery + '",\n'
+    + '  "company": "' + title.replace(/"/g,"'") + '",\n'
+    + '  "rating": "BUY|HOLD|SELL",\n'
+    + '  "targetPrice": 0.00,\n'
+    + '  "currentPrice": 0.00,\n'
+    + '  "upside": "+X.X%",\n'
+    + '  "thesis": "One sharp differentiated investment thesis sentence.",\n'
+    + '  ' + _template.promptKpiSchema + ',\n'
+    + '  "dcf": {"wacc":0.00,"terminalGrowth":0.025,"impliedPrice":0.00' + _template.promptDcfExtra + '},\n'
+    + '  "comps": [{"name":"Peer 1","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"},{"name":"Peer 2","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"},{"name":"Peer 3","ticker":"XXX","evEbitda":"X.Xx","pe":"X.Xx","premium":"+X.X%"}],\n'
+    + '  "bull": ["Point 1","Point 2","Point 3"],\n'
+    + '  "bear": ["Risk 1","Risk 2","Risk 3"],\n'
+    + '  "catalysts": ["Catalyst 1","Catalyst 2","Catalyst 3"],\n'
+    + '  "businessOverview": "2-3 sentences.",\n'
+    + '  "financialAnalysis": "2-3 sentences.",\n'
+    + '  "valSummary": "2-3 sentences.",\n'
+    + '  "risks": "2 sentences.",\n'
+    + '  "conclusion": "2 sentences."\n'
+    + '}';
 
   try {
     var res = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
@@ -1628,7 +1712,7 @@ async function runQuickPitch(title) {
       '<div id="artifact-status" style="margin-top:8px;font-family:DM Mono,monospace;font-size:9px;color:var(--muted);padding:6px 10px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">Saving artifacts...</div>';
 
     // Trigger local file generation as a background operation — does not block UI
-    saveArtifacts(pitch, qc, currentQuery);
+    saveArtifacts(pitch, qc, currentQuery, _template);
 
   } catch(e) {
     body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Error building pitch: ' + e.message + '<div style="margin-top:8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted)">Try again in 60s if this is a rate limit error.</div></div>';
@@ -1636,7 +1720,7 @@ async function runQuickPitch(title) {
 }
 
 // ── Local artifact generation — calls Python local server on localhost:3001 ──
-async function saveArtifacts(pitch, qc, tickerAtCall) {
+async function saveArtifacts(pitch, qc, tickerAtCall, template) {
   const statusEl = document.getElementById('artifact-status');
   const setStatus = (msg, color) => {
     if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
@@ -1678,6 +1762,9 @@ async function saveArtifacts(pitch, qc, tickerAtCall) {
       calendar:         cal,
       qcThesisScore:    qc ? qc.thesis_score : null,
       qcFlag:           qc ? qc.flag : null,
+      templateFamily:       (template || {}).family || 'generic_corporate',
+      sector:               window._lastLiveData?.profile?.sector || '',
+      historicalFinancials: window._lastLiveData?.historicalFinancials || [],
     };
 
     const ctrl = new AbortController();
@@ -1864,9 +1951,13 @@ async function loadFilings(bodyId = 'fil-body') {
       return;
     }
     const badgeClass = (form) => ({'10-K':'tenk','10-Q':'tenq','20-F':'twentyf','6-K':'sixk'}[form] || 'eightk');
+    const edgarBrowseUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${data.cik}&type=&dateb=&owner=include&count=40`;
     body.innerHTML = `
       <div class="val-section">
-        <div class="val-section-title">${data.companyName} — SEC Filings</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="val-section-title" style="margin-bottom:0">${data.companyName} — SEC Filings</div>
+          <a href="${edgarBrowseUrl}" target="_blank" rel="noopener" class="filing-link" style="font-size:10px;padding:4px 10px">All EDGAR Filings ↗</a>
+        </div>
         ${data.isForeignFiler ? `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--gold);background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:4px;padding:6px 10px;margin-bottom:12px">Foreign Private Issuer — files 20-F (annual report) and 6-K (current reports) with SEC EDGAR</div>` : ''}
         ${data.filings.map(f => `
           <div class="filing-item">
