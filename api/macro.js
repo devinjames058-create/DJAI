@@ -26,34 +26,46 @@ module.exports = async function handler(req, res) {
     }
   };
 
-  // ── FRED series fetch — returns latest value and its date ──────────────────
+  // ── FRED series fetch — scans backward to skip weekend/holiday "." entries ──
+  // FRED daily series (e.g. DFEDTARU) mark non-trading days as "."; always use
+  // the most-recent row whose value is a real number.
   const fredLatest = async (seriesId) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
     try {
       const r = await fetch(
         `https://fred.stlouisfed.org/graph/fredgraph.json?id=${seriesId}`,
-        { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' } }
+        { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' }, signal: ctrl.signal }
       );
+      clearTimeout(timer);
       if (!r.ok) return { value: null, date: null, ok: false };
       const raw = await r.json();
       const obs = raw?.observations || (Array.isArray(raw) ? raw : []);
       if (!obs.length) return { value: null, date: null, ok: false };
-      const last = obs[obs.length - 1];
-      const val = parseFloat(last?.value);
-      return { value: isNaN(val) ? null : val, date: last?.date || null, ok: !isNaN(val) };
+      // Walk backward to skip "." (missing) entries common on weekends/holidays
+      let last = null;
+      for (let i = obs.length - 1; i >= 0; i--) {
+        const v = parseFloat(obs[i]?.value);
+        if (!isNaN(v)) { last = obs[i]; break; }
+      }
+      if (!last) return { value: null, date: null, ok: false };
+      const val = parseFloat(last.value);
+      return { value: isNaN(val) ? null : val, date: last.date || null, ok: !isNaN(val) };
     } catch(e) {
+      clearTimeout(timer);
       return { value: null, date: null, ok: false };
     }
   };
 
   // ── Fetch all in parallel ──────────────────────────────────────────────────
-  const [vixRes, dxyRes, oilRes, t10yRes, fedUpperRes, fedLowerRes, cpiRes] = await Promise.allSettled([
+  const [vixRes, dxyRes, oilRes, t10yRes, fedUpperRes, fedLowerRes] = await Promise.allSettled([
     yfChart('^VIX'),
     yfChart('DX-Y.NYB'),
     yfChart('CL=F'),
     yfChart('^TNX'),
     fredLatest('DFEDTARU'),  // Fed Funds upper target (daily, FOMC)
     fredLatest('DFEDTARL'),  // Fed Funds lower target (daily, FOMC)
-    fredLatest('CPIAUCSL'),  // CPI (monthly)
+    // CPI handled separately below (needs full history for YoY calc)
   ]);
 
   const safe = (settled) => settled.status === 'fulfilled' ? settled.value : { value: null, date: null, ok: false, price: null, fmt: null, changePct: null };
@@ -63,7 +75,6 @@ module.exports = async function handler(req, res) {
   const t10y  = safe(t10yRes);
   const fedU  = safe(fedUpperRes);
   const fedL  = safe(fedLowerRes);
-  const cpiRaw = safe(cpiRes);
 
   // ── Fed Funds Rate — FOMC target range from FRED ───────────────────────────
   let fedFundsRate = null, fedFundsRaw = null, fedFundsAsOf = null;
@@ -74,28 +85,30 @@ module.exports = async function handler(req, res) {
     fedFundsAsOf = fedU.date || fedL.date || null;
   }
 
-  // ── CPI YoY — need at least 13 months to compute YoY ─────────────────────
-  // FRED fredgraph returns one value per call — for YoY we need history.
-  // Fetch with longer range via different endpoint format.
+  // ── CPI YoY — single fetch, extract both latest and 12-month-prior values ──
+  // CPIAUCSL is monthly; obs[N-1] = latest month, obs[N-13] = same month a year ago.
   let cpiYoy = null, cpiAsOf = null;
+  const cpiCtrl = new AbortController();
+  const cpiTimer = setTimeout(() => cpiCtrl.abort(), 8000);
   try {
-    const cpiHistRes = await fetch(
+    const cpiRes = await fetch(
       'https://fred.stlouisfed.org/graph/fredgraph.json?id=CPIAUCSL',
-      { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' } }
+      { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' }, signal: cpiCtrl.signal }
     );
-    if (cpiHistRes.ok) {
-      const cpiHistRaw = await cpiHistRes.json();
-      const obs = cpiHistRaw?.observations || (Array.isArray(cpiHistRaw) ? cpiHistRaw : []);
+    clearTimeout(cpiTimer);
+    if (cpiRes.ok) {
+      const cpiRaw = await cpiRes.json();
+      const obs = cpiRaw?.observations || (Array.isArray(cpiRaw) ? cpiRaw : []);
       if (obs.length >= 13) {
         const latest  = parseFloat(obs[obs.length - 1]?.value);
         const yearAgo = parseFloat(obs[obs.length - 13]?.value);
         if (!isNaN(latest) && !isNaN(yearAgo) && yearAgo > 0) {
-          cpiYoy    = (latest - yearAgo) / yearAgo * 100;
-          cpiAsOf   = obs[obs.length - 1]?.date || null;
+          cpiYoy  = (latest - yearAgo) / yearAgo * 100;
+          cpiAsOf = obs[obs.length - 1]?.date || null;
         }
       }
     }
-  } catch(e) {}
+  } catch(e) { clearTimeout(cpiTimer); }
 
   const timestamp = new Date().toISOString();
 

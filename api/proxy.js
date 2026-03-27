@@ -47,13 +47,17 @@ module.exports = async function handler(req, res) {
   const timer = setTimeout(() => ctrl.abort(), PROXY_TIMEOUT_MS);
 
   try {
+    const anthropicHeaders = {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    };
+    // web_search_20250305 requires the web-search beta header
+    if (useSearch) anthropicHeaders['anthropic-beta'] = 'web-search-2025-03-05';
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
+      headers: anthropicHeaders,
       body: JSON.stringify(payload),
       signal: ctrl.signal,
     });

@@ -1789,6 +1789,7 @@ async function askFollowUp() {
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 600,
+        useSearch: true,
         messages: [{
           role: 'user',
           content: `The user is researching "${currentQuery}" on a financial intelligence platform.\n\nCurrent analysis context: ${lastResultContext}${searchContextHistory.length > 1 ? `\n\nRelated session context: ${searchContextHistory.slice(1, 3).map(s => `${s.ticker || s.query} (${s.type}): ${s.context.slice(0, 200)}`).join(' | ')}` : ''}\n\nFollow-up question: ${question}\n\nAnswer concisely and precisely, like an elite analyst. 2-4 sentences max unless a list is warranted.`
@@ -1937,7 +1938,7 @@ async function runQuickPitch(title) {
     var res = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({model: 'claude-haiku-4-5-20251001', max_tokens: 2500, messages: [{role:'user',content:pitchPrompt}]})
+      body: JSON.stringify({model: 'claude-haiku-4-5-20251001', max_tokens: 2500, useSearch: true, messages: [{role:'user',content:pitchPrompt}]})
     }));
     var data = await res.json();
     var rawText = (data.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('');
@@ -2411,6 +2412,27 @@ async function fetchValuation(title) {
   const liveValData = window._lastLiveData || await fetchMarketData(currentQuery);
   const liveValStr = formatMarketDataForPrompt(liveValData);
 
+  // ── Live data anchors for DCF — extracted once, used to override Claude outputs ──
+  // These prevent Claude from guessing shares/netDebt/price — we inject authoritative values.
+  const _ld = liveValData || {};
+  const _ldQ = _ld.quote || {};
+  const _ldV = _ld.valuation || {};
+  const _ldF = _ld.currentFinancials || {};
+  const _ldM = _ld.macro || {};
+  // Shares in billions (FMP sharesOutstanding is raw integer, e.g. 15550000000 → 15.55B)
+  const _anchShares = _ldV.sharesOutstandingRaw != null ? (_ldV.sharesOutstandingRaw / 1e9) : null;
+  // Net debt in billions (positive = has net debt; negative = net cash)
+  const _anchNetDebt = (_ldF.totalDebtRaw != null && _ldF.totalCashRaw != null)
+    ? ((_ldF.totalDebtRaw - _ldF.totalCashRaw) / 1e9) : null;
+  // Revenue base in billions (raw → billions)
+  const _anchRevBase = _ldF.revenueRaw != null ? (_ldF.revenueRaw / 1e9) : null;
+  // FCF base in billions
+  const _anchFcfBase = _ldF.freeCashflowRaw != null ? (_ldF.freeCashflowRaw / 1e9) : null;
+  // Current price (raw numeric)
+  const _anchPrice   = _ldQ.price != null ? _ldQ.price : null;
+  // Risk-free rate
+  const _rfr = (_ldM.riskFreeRatePct && String(_ldM.riskFreeRatePct) !== 'undefined') ? _ldM.riskFreeRatePct : '4.3%';
+
   // Create compact version of live data for valuation prompts
   // Uses same null-safe pattern as formatMarketDataForPrompt to prevent 'undefined' reaching Claude
   const compactLiveStr = liveValData ? (() => {
@@ -2418,10 +2440,9 @@ async function fetchValuation(title) {
     const v = liveValData.valuation || {};
     const f = liveValData.currentFinancials || {};
     const a = liveValData.analystData || {};
-    const m = liveValData.macro || {};
     const nv = (val) => (val != null && String(val) !== 'undefined') ? val : 'N/A';
     const price = q.price != null ? '$' + q.price : 'N/A';
-    return `KEY DATA: Price ${price}, MktCap ${nv(v.marketCap)}, P/E ${nv(v.pe)}, FwdPE ${nv(v.forwardPE)}, EPS ${nv(v.eps)}, Beta ${nv(v.beta)}, Revenue ${nv(f.revenue)}, GrossMargin ${nv(f.grossMargin)}, OpMargin ${nv(f.operatingMargin)}, ProfitMargin ${nv(f.profitMargin)}, FCF ${nv(f.freeCashflow)}, ROE ${nv(f.returnOnEquity)}, RevGrowth ${nv(f.revenueGrowth)}, EarnGrowth ${nv(f.earningsGrowth)}, TotalDebt ${nv(f.totalDebt)}, Cash ${nv(f.totalCash)}, AnalystTarget ${nv(a.targetMean)}, Consensus ${nv(a.recommendation)}, WACC_RFR ${nv(m.riskFreeRatePct) !== 'N/A' ? m.riskFreeRatePct : '4.3%'}`;
+    return `KEY DATA: Price ${price}, MktCap ${nv(v.marketCap)}, P/E ${nv(v.pe)}, FwdPE ${nv(v.forwardPE)}, EPS ${nv(v.eps)}, Beta ${nv(v.beta)}, Revenue ${nv(f.revenue)}, GrossMargin ${nv(f.grossMargin)}, OpMargin ${nv(f.operatingMargin)}, ProfitMargin ${nv(f.profitMargin)}, FCF ${nv(f.freeCashflow)}, ROE ${nv(f.returnOnEquity)}, RevGrowth ${nv(f.revenueGrowth)}, EarnGrowth ${nv(f.earningsGrowth)}, TotalDebt ${nv(f.totalDebt)}, Cash ${nv(f.totalCash)}, AnalystTarget ${nv(a.targetMean)}, Consensus ${nv(a.recommendation)}, WACC_RFR ${_rfr}`;
   })() : '';
 
   // SPLIT into two focused prompts to avoid timeout
@@ -2454,8 +2475,23 @@ CRITICAL: Your response must be complete valid JSON. Do not truncate. Return ONL
 }`;
 
   // Part 2: DCF + Comps (runs after part 1)
+  // UNIT CONTRACT: ALL monetary values (revenue, ebitda, fcf, terminalValue, pvTerminalValue,
+  // totalPV, netDebt) MUST be in BILLIONS of USD (e.g. 391.0 = $391B).
+  // sharesOutstanding MUST be in BILLIONS (e.g. 15.55 = 15.55B diluted shares).
+  // currentPrice is the stock price in USD per share (e.g. 227.52).
+  const _dcfAnchors = [
+    _anchRevBase  != null ? `revenueBase=${_anchRevBase.toFixed(1)}B`      : null,
+    _anchFcfBase  != null ? `fcfBase=${_anchFcfBase.toFixed(1)}B`          : null,
+    _anchNetDebt  != null ? `netDebt=${_anchNetDebt.toFixed(1)}B`          : null,
+    _anchShares   != null ? `sharesOutstanding=${_anchShares.toFixed(2)}B` : null,
+    _anchPrice    != null ? `currentPrice=$${_anchPrice}`                  : null,
+  ].filter(Boolean).join(', ');
+
   const prompt2 = `You are an elite equity research analyst. Build DCF and comps for: "${title}" (${currentQuery}).
 ${compactLiveStr}
+
+CRITICAL UNIT CONTRACT — ALL monetary values must be in BILLIONS of USD. sharesOutstanding in BILLIONS. currentPrice in USD/share.
+LIVE ANCHORS (use exactly, do not substitute): ${_dcfAnchors || 'use best estimates'}
 
 Return ONLY this JSON (no markdown):
 {
@@ -2539,6 +2575,8 @@ Return ONLY this JSON (no markdown):
     if (!part1 || !part1.ratings) throw new Error('Invalid ratings response');
     valData = { ...part1 };
     valData.query = currentQuery;
+    // Always inject live price — Claude often returns 0.00 as placeholder which is falsy
+    if (_anchPrice != null) valData.currentPrice = _anchPrice;
 
     // Show ratings immediately while DCF loads
     if (valData.query === currentQuery) renderValTab(activeValTab);
@@ -2549,6 +2587,37 @@ Return ONLY this JSON (no markdown):
       if (part2 && part2.dcf && valData.query === currentQuery) {
         valData.dcf = part2.dcf;
         valData.comps = part2.comps;
+
+        // ── Anchor overrides — never trust Claude for price/shares/debt ──
+        // These values come from the live FMP data contract and are authoritative.
+        if (_anchPrice   != null) valData.dcf.currentPrice     = _anchPrice;
+        if (_anchShares  != null) valData.dcf.sharesOutstanding = _anchShares;
+        if (_anchNetDebt != null) valData.dcf.netDebt           = _anchNetDebt;
+
+        // ── Re-derive implied price using anchored inputs + normalized FCF ──
+        // This overwrites Claude's calculated impliedPrice so renderGauges is
+        // consistent with the corrected shares/netDebt/unit normalization.
+        (() => {
+          const _d = valData.dcf;
+          const _nb = (v) => { const n = Number(v); return !isNaN(n) && Math.abs(n) > 1e6 ? n / 1e9 : (isNaN(n) ? 0 : n); };
+          const _projs = _d.projections || [];
+          if (!_projs.length || !(_d.sharesOutstanding > 0)) return;
+          let _pvf = 0;
+          _projs.forEach((p, i) => { _pvf += _nb(p.fcf) / Math.pow(1 + _d.wacc, i + 1); });
+          const _lf = _nb(_projs[_projs.length - 1]?.fcf);
+          const _tv = (_d.wacc - _d.terminalGrowth) > 0.001
+            ? _lf * (1 + _d.terminalGrowth) / (_d.wacc - _d.terminalGrowth)
+            : _lf * 20;
+          const _eq = _pvf + _tv / Math.pow(1 + _d.wacc, _projs.length) - _nb(_d.netDebt);
+          const _ip = _eq / _d.sharesOutstanding;
+          if (_ip > 0 && isFinite(_ip)) {
+            _d.impliedPrice = _ip;
+            if (_d.currentPrice > 0) {
+              const _up = ((_ip - _d.currentPrice) / _d.currentPrice * 100);
+              _d.upsideDownside = (_up >= 0 ? '+' : '') + _up.toFixed(1) + '%';
+            }
+          }
+        })();
 
         // ── BUSINESS INTELLIGENCE LAYER ──────────────────────────
         reconcileValuationLogic(valData);
@@ -2612,7 +2681,7 @@ function renderGauges() {
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">Fair Value Est.</div>
         </div>
         <div>
-          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--muted2)">$${valData.currentPrice ? Number(valData.currentPrice).toFixed(2) : (valData.quote?.price ? Number(valData.quote.price).toFixed(2) : '—')}</div>
+          <div style="font-family:'Playfair Display',serif;font-size:28px;color:var(--muted2)">$${valData.currentPrice != null && valData.currentPrice > 0 ? Number(valData.currentPrice).toFixed(2) : (window._lastLiveData?.quote?.price != null ? Number(window._lastLiveData.quote.price).toFixed(2) : '—')}</div>
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">Current Price</div>
         </div>
       </div>
@@ -2682,7 +2751,10 @@ function renderDCF() {
     <div class="loading-bar" style="width:100%"><div class="loading-fill"></div></div>
     <div style="font-size:11px;color:var(--muted);margin-top:10px">DCF is computed in parallel — click back to Ratings then return here</div>
   </div>`;
-  const safe = (v, dec=1) => { const n = Number(v); return isNaN(n) ? '—' : n.toFixed(dec); };
+  // Normalize a DCF value to billions — guards against Claude using raw dollars
+  // (e.g. 410275000000) instead of the contracted billions unit (410.3).
+  const toBillions = (v) => { const n = Number(v); if (isNaN(n)) return NaN; return Math.abs(n) > 1e6 ? n / 1e9 : n; };
+  const safe = (v, dec=1) => { const n = toBillions(v); return isNaN(n) ? '—' : n.toFixed(dec); };
   const safePct = (v) => { const n = Number(v); return isNaN(n) ? '0.0' : (Math.abs(n) < 2 ? (n*100).toFixed(1) : n.toFixed(1)); };
   const projHTML = (d.projections || []).map(p => `
     <tr>
@@ -2758,18 +2830,20 @@ function _doRecalcDCF() {
   const d = valData.dcf;
   const wacc = parseFloat(document.getElementById('wacc-input')?.value || d.wacc * 100) / 100;
   const tgr = parseFloat(document.getElementById('tgr-input')?.value || d.terminalGrowth * 100) / 100;
-  const shares = parseFloat(document.getElementById('shares-input')?.value || d.sharesOutstanding);
-  const netDebt = parseFloat(document.getElementById('debt-input')?.value || d.netDebt);
+  // toBillions: normalize raw dollar amounts Claude may have output to billions
+  const toBillions = (v) => { const n = Number(v); return isNaN(n) ? 0 : (Math.abs(n) > 1e6 ? n / 1e9 : n); };
+  const shares  = parseFloat(document.getElementById('shares-input')?.value  ?? toBillions(d.sharesOutstanding));
+  const netDebt = parseFloat(document.getElementById('debt-input')?.value    ?? toBillions(d.netDebt));
 
   let totalPVFCF = 0;
   const projs = d.projections || [];
   projs.forEach((p, i) => {
     const df = 1 / Math.pow(1 + wacc, i + 1);
-    const pvFcf = Number(p.fcf) * df;
+    const pvFcf = toBillions(p.fcf) * df;
     totalPVFCF += pvFcf;
   });
 
-  const lastFCF = projs.length ? Number(projs[projs.length - 1].fcf) : 0;
+  const lastFCF = projs.length ? toBillions(projs[projs.length - 1].fcf) : 0;
   const termVal = wacc !== tgr ? (lastFCF * (1 + tgr)) / (wacc - tgr) : (lastFCF * 20);
   const pvTermVal = termVal / Math.pow(1 + wacc, projs.length);
   const totalPV = totalPVFCF + pvTermVal;
