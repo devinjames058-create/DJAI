@@ -1045,3 +1045,45 @@ That means:
 - the interface stays calm
 - the system remains debuggable
 - the AI is helpful without pretending certainty
+
+
+## DJAI-Specific Execution Priorities
+
+When working on DJAI, bias toward these product upgrades first:
+1. stale-data treatment everywhere
+2. source transparency on every important number
+3. cross-validation of ratios and accounting identities before display
+4. comparative analysis panel
+5. earnings and events timeline
+6. scenario modeler with sensitivity grid
+7. memo export and portfolio tracker
+
+Never jump to cosmetic work while trust issues remain unresolved.
+
+## Required Audit Modes
+
+### Live-site audit mode
+When asked to review the website, do not stop at surface-level commentary.
+You should:
+- inspect every visible button, tab, panel, and interaction
+- evaluate first-run experience and power-user flow
+- test loading, empty, stale, success, and failure states
+- identify broken trust signals around financial data
+- produce a prioritized issue list with direct fixes
+
+### Trust mode
+When working on any data-facing flow:
+- ask where the number came from
+- ask how old the number is
+- ask whether it agrees with adjacent numbers
+- ask what the UI shows when refresh fails
+- ask how the exported output preserves this context
+
+## Definition of Done for DJAI
+A task is not done unless:
+- the code works
+- the numbers are explainable
+- the freshness is visible
+- the failure path is acceptable
+- tests or verification exist for the risky path
+- the change improves trust, depth, or workflow speed

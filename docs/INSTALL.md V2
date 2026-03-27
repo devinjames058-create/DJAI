@@ -1,0 +1,24 @@
+# Install
+
+1. Copy `CLAUDE.md` to the repo root.
+2. Copy the entire `.claude/` folder into the repo root.
+3. Review `.claude/settings.json` and tighten or loosen permissions for your machine.
+4. Open Claude Code in the repo and confirm slash commands load.
+5. Run `/repo-audit`, then `/trust-hardening`, then `/website-deep-audit https://djai.vercel.app`.
+
+## What this package includes
+- 1 root `CLAUDE.md`
+- 10 commands
+- 8 agents
+- 8 skills
+- 5 checklists
+- 1 roadmap alignment note
+- 1 audit report
+
+## First 3 moves for DJAI
+1. Ship stale-data treatment and source transparency everywhere.
+2. Add cross-validation before panel render.
+3. Add comps, events, and scenario-modeler as the first depth panels.
+
+## Important
+This package is strong, but it is still a framework. The repo itself still needs to be wired to these commands, scripts, panels, and validations.

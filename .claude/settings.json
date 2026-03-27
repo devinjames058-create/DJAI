@@ -52,7 +52,12 @@
       "Bash(wc *)",
       "Bash(grep *)",
       "Bash(find *)",
-      "Bash(curl *api*)"
+      "Bash(curl *api*)",
+      "Bash(rm -r *)",
+      "Bash(rm -f *)",
+      "Bash(mv *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)"
     ],
     "deny": [
       "Bash(rm -rf *)",
