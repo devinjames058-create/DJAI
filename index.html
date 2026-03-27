@@ -142,6 +142,36 @@ body::before {
 .card-title { font-family: 'DM Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--gold); }
 .card-body { padding: 16px; }
 
+/* ── FRESHNESS INDICATOR ──────────────────────────────────────────────────── */
+.freshness {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  letter-spacing: 0.04em; user-select: none; flex-shrink: 0;
+  vertical-align: middle;
+}
+.freshness-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.freshness--live .freshness-dot    { background: #10B981; box-shadow: 0 0 5px rgba(16,185,129,0.55); }
+.freshness--live .freshness-text   { color: #10B981; }
+.freshness--recent .freshness-dot  { background: #F59E0B; }
+.freshness--recent .freshness-text { color: #F59E0B; }
+.freshness--stale .freshness-dot   { background: #64748B; }
+.freshness--stale .freshness-text  { color: #64748B; }
+.freshness--closed .freshness-dot  { background: #475569; }
+.freshness--closed .freshness-text { color: #475569; }
+.freshness--error {
+  background: rgba(239,68,68,0.07); border: 1px solid rgba(239,68,68,0.25);
+  border-radius: 4px; padding: 3px 8px; gap: 7px;
+}
+.freshness--error .freshness-dot   { background: #EF4444; }
+.freshness--error .freshness-text  { color: #EF4444; }
+.freshness-retry {
+  font-family: 'DM Mono', monospace; font-size: 8px; padding: 1px 6px;
+  border: 1px solid rgba(239,68,68,0.45); border-radius: 3px;
+  background: none; color: #EF4444; cursor: pointer;
+  letter-spacing: 0.05em; margin-left: 2px;
+}
+.freshness-retry:hover { background: rgba(239,68,68,0.1); }
+
 /* OVERVIEW CARD */
 .overview-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .metric { }
@@ -485,7 +515,10 @@ body::before {
       </div>
       <div class="right-section">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <div class="right-label" style="margin-bottom:0">Watchlist</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="right-label" style="margin-bottom:0">Watchlist</div>
+            <span id="watchlist-freshness"></span>
+          </div>
           <button onclick="addToWatchlist(currentQuery)" style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 8px;border-radius:4px;border:1px dashed var(--border2);background:none;color:var(--muted);cursor:pointer" title="Add current search to watchlist">+ Add</button>
         </div>
         <div id="watchlist-chips"></div>
@@ -561,7 +594,10 @@ async function fetchMarketData(query) {
     clearTimeout(timeout);
     if (!res.ok) return null;
     const json = await res.json();
-    if (json.success && json.data) return json.data;
+    if (json.success && json.data) {
+      window._lastDataMeta = json.meta || null;
+      return json.data;
+    }
   } catch(e) {}
   return null; // Always fail gracefully — search still works without live data
 }
@@ -630,6 +666,70 @@ function queuedClaudeCall(fn) {
   const result = _claudeRequestQueue.then(() => fn());
   _claudeRequestQueue = result.catch(() => {});
   return result;
+}
+
+// ── US market hours (Mon–Fri 09:30–16:00 ET) ─────────────────────────────────
+function isUSMarketOpen() {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false
+    }).formatToParts(new Date());
+    const day  = parts.find(p => p.type === 'weekday').value;   // 'Mon' … 'Sun'
+    const h    = parseInt(parts.find(p => p.type === 'hour').value);
+    const m    = parseInt(parts.find(p => p.type === 'minute').value);
+    if (day === 'Sat' || day === 'Sun') return false;
+    const tod  = h * 60 + m;
+    return tod >= 9 * 60 + 30 && tod < 16 * 60;
+  } catch(e) { return true; } // default to open on detection failure
+}
+
+// ── FreshnessIndicator ────────────────────────────────────────────────────────
+// meta:    { timestamp, cached, stale, servedStaleAfterError } from API meta field
+// retryFn: optional JS expression string for the retry button onclick
+function renderFreshnessIndicator(meta, retryFn) {
+  if (!meta || !meta.timestamp) return '';
+  const ts     = new Date(meta.timestamp);
+  const ageMs  = Date.now() - ts.getTime();
+  const ageSec = Math.round(ageMs / 1000);
+  const ageMin = Math.round(ageSec / 60);
+  const retry  = retryFn
+    ? `<button class="freshness-retry" onclick="${retryFn}">↺ Retry</button>`
+    : '';
+
+  // Failed refresh — served stale data after a provider error
+  if (meta.servedStaleAfterError) {
+    const t = ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    return `<span class="freshness freshness--error">`
+      + `<span class="freshness-dot"></span>`
+      + `<span class="freshness-text">Using cached data from ${t} — refresh failed</span>`
+      + retry + `</span>`;
+  }
+  // Market closed
+  if (!isUSMarketOpen()) {
+    const t = ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    return `<span class="freshness freshness--closed">`
+      + `<span class="freshness-dot"></span>`
+      + `<span class="freshness-text">Market closed · As of ${t}</span></span>`;
+  }
+  // Stale (15+ min or server flag)
+  if (meta.stale || ageSec > 900) {
+    const t = ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    return `<span class="freshness freshness--stale">`
+      + `<span class="freshness-dot"></span>`
+      + `<span class="freshness-text">Last updated: ${t}</span>`
+      + retry + `</span>`;
+  }
+  // Recent (1–15 min)
+  if (ageSec > 60) {
+    return `<span class="freshness freshness--recent">`
+      + `<span class="freshness-dot"></span>`
+      + `<span class="freshness-text">Updated ${ageMin}m ago</span></span>`;
+  }
+  // Live (< 60 s)
+  return `<span class="freshness freshness--live">`
+    + `<span class="freshness-dot"></span>`
+    + `<span class="freshness-text">Live</span></span>`;
 }
 
 // ─── PORTFOLIO MODULE ────────────────────────────────────────────────────────
@@ -713,12 +813,15 @@ function renderWatchlist() {
   const p = loadPortfolio();
   if (!p.watchlist.length) {
     el.innerHTML = '<span style="font-size:10px;color:var(--muted)">Empty. Search a ticker and click + Add.</span>';
-    return;
+  } else {
+    el.innerHTML = p.watchlist.map(t =>
+      `<span class="ticker-chip" onclick="quickSearch('${t}')" title="Search · right-click to remove"
+         oncontextmenu="event.preventDefault();removeFromWatchlist('${t}')">${t}</span>`
+    ).join('');
   }
-  el.innerHTML = p.watchlist.map(t =>
-    `<span class="ticker-chip" onclick="quickSearch('${t}')" title="Search · right-click to remove"
-       oncontextmenu="event.preventDefault();removeFromWatchlist('${t}')">${t}</span>`
-  ).join('');
+  // Update watchlist freshness (reflects last market data fetch)
+  const fi = document.getElementById('watchlist-freshness');
+  if (fi) fi.innerHTML = renderFreshnessIndicator(window._lastDataMeta);
 }
 
 function renderPortfolio() {
@@ -831,6 +934,10 @@ async function refreshPortfolioPrices() {
     await new Promise(r => setTimeout(r, 600)); // stagger requests
   }
   renderPortfolio();
+  // Stamp refresh time and update watchlist freshness indicator
+  window._portfolioRefreshMeta = { timestamp: new Date().toISOString(), cached: false, stale: false, servedStaleAfterError: false };
+  const fi = document.getElementById('watchlist-freshness');
+  if (fi) fi.innerHTML = renderFreshnessIndicator(window._portfolioRefreshMeta);
 }
 
 // ─── END PORTFOLIO MODULE ────────────────────────────────────────────────────
@@ -1291,7 +1398,7 @@ function renderResults(query, r) {
       <div class="results-header">
         <div class="results-header-left">
           <div class="results-query">${r.title || query}</div>
-          <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · <span style="color:var(--green)">Live data</span>' : ' · <span style="color:var(--muted2)">No live data</span>'}${entityBadgeHTML}${qualityBadgeHTML}${earningsBadgeHTML}</div>
+          <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · ' + renderFreshnessIndicator(window._lastDataMeta, 'runSearch()') : ' · <span style="color:var(--muted2)">No live data</span>'}${entityBadgeHTML}${qualityBadgeHTML}${earningsBadgeHTML}</div>
         </div>
         <div class="results-actions">
           <button class="val-trigger-btn" onclick="openValPanel('${(r.title || query).replace(/['"]/g,'')}')">◈ Valuation</button>
@@ -1304,7 +1411,7 @@ function renderResults(query, r) {
 
       ${metricsHTML ? `
       <div class="card" style="animation-delay:.0s">
-        <div class="card-header"><span class="card-icon">◈</span><span class="card-title">Overview</span></div>
+        <div class="card-header"><span class="card-icon">◈</span><span class="card-title">Overview</span><span style="margin-left:auto">${renderFreshnessIndicator(window._lastDataMeta)}</span></div>
         <div class="card-body">
           <p style="font-size:12px;color:var(--muted2);line-height:1.7;margin-bottom:14px">${r.overview?.description || ''}</p>
           <div class="overview-grid">${metricsHTML}</div>
@@ -1473,7 +1580,9 @@ let valData = null;
 let activeValTab = 'gauges';
 
 function openFinancialsPanel() {
-  document.getElementById('fin-panel-sub').textContent = currentQuery.toUpperCase();
+  document.getElementById('fin-panel-sub').innerHTML =
+    currentQuery.toUpperCase()
+    + (window._lastDataMeta ? '&nbsp;&nbsp;' + renderFreshnessIndicator(window._lastDataMeta, 'runSearch()') : '');
   document.getElementById('fin-overlay').classList.add('open');
   document.getElementById('fin-panel').classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -1486,7 +1595,8 @@ function closeFinancialsPanel() {
 }
 
 function openFilingsPanel() {
-  document.getElementById('fil-panel-sub').textContent = currentQuery.toUpperCase();
+  // Filings are fetched live from SEC EDGAR — show "Live" on open, update after load
+  document.getElementById('fil-panel-sub').innerHTML = currentQuery.toUpperCase();
   document.getElementById('fil-overlay').classList.add('open');
   document.getElementById('fil-panel').classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -1818,7 +1928,9 @@ async function saveArtifacts(pitch, qc, tickerAtCall, template) {
 
 function openValPanel(title) {
   document.getElementById('val-panel-title').textContent = title;
-  document.getElementById('val-panel-ticker').textContent = currentQuery.toUpperCase();
+  document.getElementById('val-panel-ticker').innerHTML =
+    currentQuery.toUpperCase()
+    + (window._lastDataMeta ? '&nbsp;&nbsp;' + renderFreshnessIndicator(window._lastDataMeta, 'runSearch()') : '');
   activeValTab = 'gauges'; // Always reset to ratings tab on open
   // Reset only val-panel tabs, not fin/fil panels
   document.querySelectorAll('#val-panel .val-tab').forEach((t,i) => t.classList.toggle('active', i===0));
@@ -1960,6 +2072,10 @@ async function loadFilings(bodyId = 'fil-body') {
       body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">No SEC filings found for this ticker.</div>';
       return;
     }
+    // Stamp filings freshness (fetched live from SEC EDGAR)
+    window._lastFilingsMeta = { timestamp: new Date().toISOString(), cached: false, stale: false, servedStaleAfterError: false };
+    const filSub = document.getElementById('fil-panel-sub');
+    if (filSub) filSub.innerHTML = currentQuery.toUpperCase() + '&nbsp;&nbsp;' + renderFreshnessIndicator(window._lastFilingsMeta);
     const badgeClass = (form) => ({'10-K':'tenk','10-Q':'tenq','20-F':'twentyf','6-K':'sixk'}[form] || 'eightk');
     const edgarBrowseUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${data.cik}&type=&dateb=&owner=include&count=40`;
     body.innerHTML = `

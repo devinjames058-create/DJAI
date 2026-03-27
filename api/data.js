@@ -1,3 +1,10 @@
+// ── Server-side in-memory cache (per Vercel warm instance) ────────────────────
+const _dataCache = new Map(); // sym → { data, time }
+// Normal TTL: 15 minutes — prevents FMP free-tier exhaustion on repeated searches
+const CACHE_TTL_MS = 15 * 60 * 1000;
+// To test FreshnessIndicator transitions (Live→Recent→Stale), temporarily use:
+// const CACHE_TTL_MS = 5 * 1000;
+
 // ── FMP daily request counter (module-level, resets at UTC midnight) ──────────
 // With 9 FMP calls per /api/data request and 250/day free-tier cap,
 // this gives ~27 full ticker fetches per day.
@@ -73,6 +80,25 @@ module.exports = async function handler(req, res) {
   if (!ticker) return res.status(400).json({ error: 'No ticker provided' });
 
   const sym = encodeURIComponent(ticker.toUpperCase());
+  const reqId = Math.random().toString(36).slice(2, 9);
+  const now   = Date.now();
+
+  // ── Cache hit — return without calling FMP ──────────────────────────────────
+  const hit    = _dataCache.get(sym);
+  const hitAge = hit ? now - hit.time : Infinity;
+  if (hit && hitAge < CACHE_TTL_MS) {
+    return res.status(200).json({
+      success: true,
+      data: hit.data,
+      meta: {
+        source: 'fmp', cached: true, stale: false,
+        servedStaleAfterError: false,
+        timestamp: new Date(hit.time).toISOString(),
+        ageSeconds: Math.round(hitAge / 1000),
+        requestId: reqId
+      }
+    });
+  }
 
   // ── Fire all requests in parallel ─────────────────────────────────────────
   const [
@@ -313,5 +339,34 @@ module.exports = async function handler(req, res) {
     })).filter(n => n.headline)
   };
 
-  return res.status(200).json({ success: true, data: aggregated });
+  // ── Cache write + meta ──────────────────────────────────────────────────────
+  // If primary data came back empty (e.g. FMP 429 / bad ticker), serve stale cache
+  const primaryMissing = aggregated.quote?.price == null;
+  if (primaryMissing && hit) {
+    return res.status(200).json({
+      success: true,
+      data: hit.data,
+      meta: {
+        source: 'fmp', cached: true, stale: true,
+        servedStaleAfterError: true,
+        timestamp: new Date(hit.time).toISOString(),
+        ageSeconds: Math.round((now - hit.time) / 1000),
+        requestId: reqId,
+        error: 'FMP returned empty data — serving cached response'
+      }
+    });
+  }
+  // Good fresh data — cache it and return with live meta
+  if (!primaryMissing) _dataCache.set(sym, { data: aggregated, time: now });
+  return res.status(200).json({
+    success: true,
+    data: aggregated,
+    meta: {
+      source: 'fmp', cached: false, stale: primaryMissing,
+      servedStaleAfterError: false,
+      timestamp: new Date().toISOString(),
+      ageSeconds: 0,
+      requestId: reqId
+    }
+  });
 };
