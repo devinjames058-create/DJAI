@@ -622,6 +622,7 @@ let lastResultContext = '';
 let lastLiveDataAvailable = false;
 let searchContextHistory = []; // Last 3 completed searches: {query, ticker, type, context}
 let _claudeRequestQueue = Promise.resolve(); // Serializes all Claude calls
+let _fupCtrl = null; // Module-level follow-up AbortController — aborted on each new call
 
 // Serialize all Claude proxy calls — prevents parallel requests against Haiku 50 RPM limit
 // result may reject (caller handles); queue always recovers from errors
@@ -1036,7 +1037,7 @@ Return valid JSON only. No markdown. No explanation. No truncation.`;
       result = parsed;
     }
 
-    lastResultContext = result.context || '';
+    lastResultContext = (result.context || '').slice(0, 600);
     // Update entity type now that we have the AI-confirmed type
     window._entityType = detectEntityType(query, liveData, result.type);
     renderResults(query, result);
@@ -1420,11 +1421,15 @@ async function askFollowUp() {
   if (!question) return;
   if (!currentQuery) { showToast('Run a search first'); return; }
 
+  // Cancel any in-flight follow-up before starting a new one
+  if (_fupCtrl) { try { _fupCtrl.abort(); } catch(_) {} }
+  _fupCtrl = new AbortController();
+
   const resultEl = document.getElementById('followup-result');
   resultEl.textContent = 'Thinking...';
   resultEl.style.color = 'var(--muted)';
 
-  const fupCtrl = new AbortController();
+  const fupCtrl = _fupCtrl;
   const fupTimer = setTimeout(() => fupCtrl.abort(), 30000);
   try {
     const res = await queuedClaudeCall(() => fetch('https://djai.vercel.app/api/proxy', {
@@ -1608,10 +1613,15 @@ async function runQuickPitch(title) {
 
     if (qc.optimized_thesis && qc.thesis_score >= 7) pitch.thesis = qc.optimized_thesis;
 
-    // Render pitch
+    // Render pitch — guard against partial AI response (missing required fields)
+    pitch.rating      = pitch.rating      || 'HOLD';
+    pitch.targetPrice = pitch.targetPrice || '—';
+    pitch.currentPrice= pitch.currentPrice|| '—';
+    pitch.upside      = pitch.upside      || '0%';
+    pitch.thesis      = pitch.thesis      || 'Analysis unavailable — retry for a complete pitch.';
     var ratingColor = pitch.rating === 'BUY' ? 'var(--green)' : pitch.rating === 'SELL' ? 'var(--red)' : 'var(--amber)';
     var upsideNum = parseFloat(pitch.upside);
-    var upsideColor = upsideNum >= 0 ? 'var(--green)' : 'var(--red)';
+    var upsideColor = !isNaN(upsideNum) && upsideNum >= 0 ? 'var(--green)' : 'var(--red)';
 
     var metricsHTML = [
       ['Revenue', pitch.keyMetrics && pitch.keyMetrics.revenue],
