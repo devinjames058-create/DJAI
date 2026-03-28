@@ -10,7 +10,7 @@ const tests = [
 let anyFailed = false;
 for (const t of tests) {
   try {
-    execSync(`node ${t}`, { stdio: 'inherit', cwd: require('path').join(__dirname, '..') });
+    execSync(`"${process.execPath}" ${t}`, { stdio: 'inherit', cwd: require('path').join(__dirname, '..') });
   } catch(e) {
     anyFailed = true;
   }
