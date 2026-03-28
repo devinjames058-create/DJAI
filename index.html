@@ -2616,7 +2616,6 @@ function _buildFinContext(ticker, data) {
   const bs = (data.balanceSheet    || []).slice(0, 2);
   const cf = (data.cashFlow        || []).slice(0, 2);
   const yr = (r) => r.calendarYear || r.date?.slice(0,4) || '?';
-  const pct = (n, d) => (n != null && d != null && Number(d) !== 0) ? (Number(n)/Number(d)*100).toFixed(1) + '%' : 'N/A';
 
   const isLines = is.map(r =>
     `${yr(r)}: Rev ${fmt(r.revenue)}, GrossProfit ${fmt(r.grossProfit)} (${pct(r.grossProfit,r.revenue)}), OpIncome ${fmt(r.operatingIncome)} (${pct(r.operatingIncome,r.revenue)}), NetIncome ${fmt(r.netIncome)} (${pct(r.netIncome,r.revenue)}), EPS $${r.epsDiluted!=null?Number(r.epsDiluted).toFixed(2):'N/A'}`

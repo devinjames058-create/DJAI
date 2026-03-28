@@ -4,26 +4,39 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  const NULL_QUOTE = { price: null, fmt: null, changePct: null, change: null, ok: false };
+
   // ── Per-symbol Yahoo Finance fetch — returns price, change, changePct + ok flag ──
+  // Uses 8 s AbortController so a slow/blocked Yahoo response can't hang the function.
+  // Tries query1 first; falls back to query2 if blocked (Yahoo rate-limits vary by host).
   const yfChart = async (symbol) => {
-    try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
-      const r = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DJAI/1.0)', 'Accept': 'application/json' }
-      });
-      if (!r.ok) return { price: null, fmt: null, changePct: null, change: null, ok: false };
-      const data = await r.json();
-      const meta = data?.chart?.result?.[0]?.meta;
-      if (!meta) return { price: null, fmt: null, changePct: null, change: null, ok: false };
-      const price = meta.regularMarketPrice ?? null;
-      const prev = meta.chartPreviousClose ?? meta.previousClose ?? meta.regularMarketPreviousClose ?? null;
-      const change = (price != null && prev != null) ? price - prev : null;
-      const changePct = (change != null && prev) ? ((change / prev) * 100).toFixed(2) + '%' : null;
-      const marketState = meta.marketState ?? null; // REGULAR | PRE | POST | CLOSED
-      return { price, fmt: price != null ? price.toFixed(2) : null, change, changePct, marketState, ok: price != null };
-    } catch(e) {
-      return { price: null, fmt: null, changePct: null, change: null, ok: false };
+    const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+    for (const host of hosts) {
+      const ctrl  = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
+        const r = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DJAI/1.0)', 'Accept': 'application/json' },
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!r.ok) continue; // try next host
+        const data = await r.json();
+        const meta = data?.chart?.result?.[0]?.meta;
+        if (!meta) continue;
+        const price = meta.regularMarketPrice ?? null;
+        const prev  = meta.chartPreviousClose ?? meta.previousClose ?? meta.regularMarketPreviousClose ?? null;
+        const change    = (price != null && prev != null) ? price - prev : null;
+        const changePct = (change != null && prev) ? ((change / prev) * 100).toFixed(2) + '%' : null;
+        const marketState = meta.marketState ?? null;
+        return { price, fmt: price != null ? price.toFixed(2) : null, change, changePct, marketState, ok: price != null };
+      } catch(e) {
+        clearTimeout(timer);
+        // AbortError or network error — try next host
+      }
     }
+    return NULL_QUOTE;
   };
 
   // ── FRED series fetch — official API, scans backward to skip "." entries ────
