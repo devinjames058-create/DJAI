@@ -2354,7 +2354,7 @@ async function loadFinancials(bodyId = 'fin-body') {
     clearTimeout(timer);
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Financials unavailable');
-    _finCache[ticker] = { incomeStatement: data.incomeStatement, balanceSheet: data.balanceSheet, cashFlow: data.cashFlow };
+    _finCache[ticker] = { incomeStatement: data.incomeStatement, balanceSheet: data.balanceSheet, cashFlow: data.cashFlow, entityName: data.entityName, cik: data.cik };
     _finActiveSub = 'is';
     _finChatHistory = [];
     _renderFinPanel(body, ticker, _finCache[ticker], 'is');
@@ -2363,7 +2363,7 @@ async function loadFinancials(bodyId = 'fin-body') {
     body.innerHTML = `<div style="padding:24px;color:var(--muted2);font-size:12px">
       ${timedOut ? 'Request timed out — try again.' : _sanitizeText('Error: ' + e.message)}
       <div style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">
-        Check that FMP_API_KEY is set in Vercel environment variables.
+        Data sourced from SEC EDGAR XBRL. Non-US companies or those without 10-K filings may return no data.
       </div>
     </div>`;
   }
@@ -2382,9 +2382,10 @@ function _finSwitchTab(tab) {
 function _renderFinPanel(body, ticker, data, activeSub) {
   const hasAny = data.incomeStatement?.length || data.balanceSheet?.length || data.cashFlow?.length;
   if (!hasAny) {
-    body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Financial statements not available for this ticker via FMP.</div>';
+    body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">No XBRL 10-K data found in SEC EDGAR for this ticker. Non-US companies or those without US GAAP XBRL filings are not supported.</div>';
     return;
   }
+  const entityLabel = data.entityName ? `${_sanitizeText(data.entityName)} (${_sanitizeText(ticker)})` : _sanitizeText(ticker);
   body.innerHTML = `
     <div class="fin-tabs">
       <div class="fin-tab ${activeSub==='is'?'active':''}" data-tab="is" onclick="_finSwitchTab('is')">Income Statement</div>
@@ -2394,7 +2395,7 @@ function _renderFinPanel(body, ticker, data, activeSub) {
     <div style="padding:16px 16px 0">
       <div class="fin-table-wrap" id="fin-stmt-body">${_renderFinStmt(activeSub, data)}</div>
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:10px;padding-bottom:4px">
-        Source: FMP (SEC filings) · Annual · Most recent on left
+        Source: SEC EDGAR (XBRL 10-K filings) · Annual · Most recent on left · ${entityLabel}
       </div>
     </div>
     <div class="fin-chat" id="fin-chat-wrap">
@@ -2443,9 +2444,14 @@ function _fmtBvps(v) {
   if (v == null) return '<span style="color:var(--muted)">—</span>';
   return '$' + Number(v).toFixed(2);
 }
+// Format a pre-computed ratio (0.0–1.0) as a teal percentage
+function _fmtMargin(v) {
+  if (v == null || isNaN(Number(v))) return '<span style="color:var(--muted)">—</span>';
+  return `<span class="pct">${(Number(v) * 100).toFixed(1)}%</span>`;
+}
 
 function _finHeader(arr) {
-  const years = arr.map(r => r.calendarYear || r.date?.slice(0,4) || '—');
+  const years = arr.map(r => r.year || r.calendarYear || r.date?.slice(0,4) || '—');
   return `<tr><th>Line Item</th>${years.map(y => `<th>${_sanitizeText(String(y))}</th>`).join('')}</tr>`;
 }
 function _row(label, arr, fn, cls='') {
@@ -2465,20 +2471,18 @@ function _renderFinStmt(tab, data) {
         ${_row('Revenue',                     is, r => _fmtB(r.revenue))}
         ${_row('Cost of Revenue',             is, r => _fmtB(r.costOfRevenue))}
         ${_row('Gross Profit',                is, r => _fmtB(r.grossProfit), 'subtotal')}
-        ${_row('Gross Margin',                is, r => _fmtPct(r.grossProfit, r.revenue), 'subtotal')}
+        ${_row('Gross Margin',                is, r => _fmtMargin(r.grossMargin), 'subtotal')}
         ${_divRow('— Operating Expenses —')}
-        ${_row('R&D Expenses',                is, r => _fmtB(r.researchAndDevelopmentExpenses))}
-        ${_row('SG&A Expenses',               is, r => _fmtB(r.sellingGeneralAndAdministrativeExpenses))}
-        ${_row('Total Operating Expenses',    is, r => _fmtB(r.operatingExpenses))}
+        ${_row('R&D Expenses',                is, r => _fmtB(r.rd))}
+        ${_row('SG&A Expenses',               is, r => _fmtB(r.sga))}
         ${_row('Operating Income (EBIT)',     is, r => _fmtB(r.operatingIncome), 'subtotal')}
-        ${_row('Operating Margin',            is, r => _fmtPct(r.operatingIncome, r.revenue), 'subtotal')}
+        ${_row('Operating Margin',            is, r => _fmtMargin(r.operatingMargin), 'subtotal')}
         ${_divRow('— Below the Line —')}
         ${_row('Interest Expense',            is, r => _fmtB(r.interestExpense))}
-        ${_row('EBITDA',                      is, r => _fmtB(r.ebitda))}
         ${_row('Net Income',                  is, r => _fmtB(r.netIncome), 'total')}
-        ${_row('Net Margin',                  is, r => _fmtPct(r.netIncome, r.revenue), 'subtotal')}
+        ${_row('Net Margin',                  is, r => _fmtMargin(r.netMargin), 'subtotal')}
         ${_row('EPS (Diluted)',               is, r => _fmtEps(r.epsDiluted))}
-        ${_row('Shares Out. Diluted',         is, r => _fmtShares(r.weightedAverageShsOutDil))}
+        ${_row('Shares Out. Diluted',         is, r => _fmtShares(r.sharesOutDiluted))}
       </tbody>
     </table>`;
   }
@@ -2489,18 +2493,15 @@ function _renderFinStmt(tab, data) {
       <thead>${_finHeader(bs)}</thead>
       <tbody>
         ${_divRow('— Assets —')}
-        ${_row('Cash & Equivalents',          bs, r => _fmtB(r.cashAndCashEquivalents))}
-        ${_row('Short-Term Investments',      bs, r => _fmtB(r.shortTermInvestments))}
-        ${_row('Total Current Assets',        bs, r => _fmtB(r.totalCurrentAssets))}
+        ${_row('Cash & Equivalents',          bs, r => _fmtB(r.cash))}
+        ${_row('Total Current Assets',        bs, r => _fmtB(r.currentAssets))}
         ${_row('Total Assets',                bs, r => _fmtB(r.totalAssets), 'subtotal')}
         ${_divRow('— Liabilities —')}
-        ${_row('Total Current Liabilities',   bs, r => _fmtB(r.totalCurrentLiabilities))}
+        ${_row('Total Current Liabilities',   bs, r => _fmtB(r.currentLiabilities))}
         ${_row('Long-Term Debt',              bs, r => _fmtB(r.longTermDebt))}
-        ${_row('Total Debt',                  bs, r => _fmtB(r.totalDebt))}
         ${_row('Total Liabilities',           bs, r => _fmtB(r.totalLiabilities), 'subtotal')}
         ${_divRow('— Equity —')}
-        ${_row('Retained Earnings',           bs, r => _fmtB(r.retainedEarnings))}
-        ${_row('Total Equity',                bs, r => _fmtB(r.totalStockholdersEquity), 'total')}
+        ${_row('Total Equity',                bs, r => _fmtB(r.equity), 'total')}
         ${_row('Book Value Per Share',        bs, r => _fmtBvps(r.bookValuePerShare))}
       </tbody>
     </table>`;
@@ -2511,17 +2512,15 @@ function _renderFinStmt(tab, data) {
     return `<table class="fin-table">
       <thead>${_finHeader(cf)}</thead>
       <tbody>
-        ${_row('Operating Cash Flow',         cf, r => _fmtB(r.operatingCashFlow), 'subtotal')}
-        ${_row('Capital Expenditure',         cf, r => _fmtB(r.capitalExpenditure))}
+        ${_row('Operating Cash Flow',         cf, r => _fmtB(r.operatingCF), 'subtotal')}
+        ${_row('Capital Expenditure',         cf, r => _fmtB(r.capex))}
         ${_row('Free Cash Flow',              cf, r => _fmtB(r.freeCashFlow), 'total')}
         ${_divRow('— Investing —')}
-        ${_row('Acquisitions (Net)',           cf, r => _fmtB(r.acquisitionsNet))}
-        ${_row('Net Investing CF',            cf, r => _fmtB(r.netCashProvidedByInvestingActivities ?? r.netCashUsedForInvestingActivites))}
+        ${_row('Net Investing CF',            cf, r => _fmtB(r.investingCF))}
         ${_divRow('— Financing —')}
         ${_row('Dividends Paid',              cf, r => _fmtB(r.dividendsPaid))}
-        ${_row('Share Repurchases',           cf, r => _fmtB(r.commonStockRepurchased))}
-        ${_row('Net Financing CF',            cf, r => _fmtB(r.netCashUsedProvidedByFinancingActivities))}
-        ${_row('Net Change in Cash',          cf, r => _fmtB(r.netChangeInCash), 'subtotal')}
+        ${_row('Share Repurchases',           cf, r => _fmtB(r.shareRepurchases))}
+        ${_row('Net Financing CF',            cf, r => _fmtB(r.financingCF))}
       </tbody>
     </table>`;
   }
@@ -2569,7 +2568,7 @@ async function _finChatAsk() {
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 600,
         useSearch: true,
-        system: `You are a financial analyst assistant with access to ${ticker}'s financial statements (last 5 annual periods from FMP/SEC filings). Answer questions about financial performance, trends, and metrics. Be specific with numbers and always cite the fiscal year. Use the data provided — do not fabricate numbers.`,
+        system: `You are a financial analyst assistant with access to ${ticker}'s financial statements sourced directly from SEC EDGAR XBRL filings (10-K annual reports). Answer questions about financial performance, trends, and metrics. Be specific with numbers and always cite the fiscal year. Use the data provided — do not fabricate numbers.`,
         messages,
       }),
     });
@@ -2616,21 +2615,22 @@ function _buildFinContext(ticker, data) {
   const is = (data.incomeStatement || []).slice(0, 2);
   const bs = (data.balanceSheet    || []).slice(0, 2);
   const cf = (data.cashFlow        || []).slice(0, 2);
-  const yr = (r) => r.calendarYear || r.date?.slice(0,4) || '?';
+  const yr = (r) => r.year || r.calendarYear || r.date?.slice(0,4) || '?';
+  const pctR = (v) => v != null ? (Number(v)*100).toFixed(1)+'%' : 'N/A';
 
   const isLines = is.map(r =>
-    `${yr(r)}: Rev ${fmt(r.revenue)}, GrossProfit ${fmt(r.grossProfit)} (${pct(r.grossProfit,r.revenue)}), OpIncome ${fmt(r.operatingIncome)} (${pct(r.operatingIncome,r.revenue)}), NetIncome ${fmt(r.netIncome)} (${pct(r.netIncome,r.revenue)}), EPS $${r.epsDiluted!=null?Number(r.epsDiluted).toFixed(2):'N/A'}`
+    `${yr(r)}: Rev ${fmt(r.revenue)}, GrossProfit ${fmt(r.grossProfit)} (${pctR(r.grossMargin)}), OpIncome ${fmt(r.operatingIncome)} (${pctR(r.operatingMargin)}), NetIncome ${fmt(r.netIncome)} (${pctR(r.netMargin)}), EPS $${r.epsDiluted!=null?Number(r.epsDiluted).toFixed(2):'N/A'}`
   ).join(' | ');
 
   const bsLines = bs.map(r =>
-    `${yr(r)}: Cash ${fmt(r.cashAndCashEquivalents)}, TotalAssets ${fmt(r.totalAssets)}, TotalDebt ${fmt(r.totalDebt)}, Equity ${fmt(r.totalStockholdersEquity)}, BVPS $${r.bookValuePerShare!=null?Number(r.bookValuePerShare).toFixed(2):'N/A'}`
+    `${yr(r)}: Cash ${fmt(r.cash)}, TotalAssets ${fmt(r.totalAssets)}, LTDebt ${fmt(r.longTermDebt)}, Equity ${fmt(r.equity)}, BVPS $${r.bookValuePerShare!=null?Number(r.bookValuePerShare).toFixed(2):'N/A'}`
   ).join(' | ');
 
   const cfLines = cf.map(r =>
-    `${yr(r)}: OpCF ${fmt(r.operatingCashFlow)}, CapEx ${fmt(r.capitalExpenditure)}, FCF ${fmt(r.freeCashFlow)}, Dividends ${fmt(r.dividendsPaid)}, Buybacks ${fmt(r.commonStockRepurchased)}`
+    `${yr(r)}: OpCF ${fmt(r.operatingCF)}, CapEx ${fmt(r.capex)}, FCF ${fmt(r.freeCashFlow)}, Dividends ${fmt(r.dividendsPaid)}, Buybacks ${fmt(r.shareRepurchases)}`
   ).join(' | ');
 
-  return `${ticker} FINANCIAL DATA (FMP/SEC, last 2 annual periods):\nIncome Statement: ${isLines}\nBalance Sheet: ${bsLines}\nCash Flow: ${cfLines}`;
+  return `${ticker} FINANCIAL DATA (SEC EDGAR XBRL 10-K, last 2 annual periods):\nIncome Statement: ${isLines}\nBalance Sheet: ${bsLines}\nCash Flow: ${cfLines}`;
 }
 
 async function loadFilings(bodyId = 'fil-body') {
