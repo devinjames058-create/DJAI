@@ -35,7 +35,8 @@ module.exports = async function handler(req, res) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     try {
-      const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(seriesId)}&api_key=${FRED_KEY}&limit=10&sort_order=asc&file_type=json`;
+      // sort_order=desc → obs[0] is the most recent; limit=10 gives the last 10 rows
+      const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(seriesId)}&api_key=${FRED_KEY}&limit=10&sort_order=desc&file_type=json`;
       const r = await fetch(url, {
         headers: { 'User-Agent': 'DJAI Finance dev@djai.app' },
         signal: ctrl.signal,
@@ -45,9 +46,9 @@ module.exports = async function handler(req, res) {
       const raw = await r.json();
       const obs = raw?.observations || [];
       if (!obs.length) return { value: null, date: null, ok: false };
-      // Walk backward to skip "." (missing) entries common on weekends/holidays
+      // Walk forward from obs[0] (most recent) to skip "." weekend/holiday entries
       let last = null;
-      for (let i = obs.length - 1; i >= 0; i--) {
+      for (let i = 0; i < obs.length; i++) {
         const v = parseFloat(obs[i]?.value);
         if (!isNaN(v)) { last = obs[i]; break; }
       }
@@ -89,26 +90,27 @@ module.exports = async function handler(req, res) {
   }
 
   // ── CPI YoY — single fetch, extract both latest and 12-month-prior values ──
-  // CPIAUCSL is monthly; obs[N-1] = latest month, obs[N-13] = same month a year ago.
+  // CPIAUCSL is monthly; sort_order=desc → obs[0] = latest month, obs[12] = same month a year ago.
   let cpiYoy = null, cpiAsOf = null;
   const cpiCtrl = new AbortController();
   const cpiTimer = setTimeout(() => cpiCtrl.abort(), 8000);
   try {
     if (!FRED_KEY) throw new Error('FRED_API_KEY not set');
+    // sort_order=desc → obs[0] = most recent month, obs[12] = same month 1 year ago
     const cpiRes = await fetch(
-      `https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&api_key=${FRED_KEY}&limit=20&sort_order=asc&file_type=json`,
+      `https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&api_key=${FRED_KEY}&limit=20&sort_order=desc&file_type=json`,
       { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' }, signal: cpiCtrl.signal }
     );
     clearTimeout(cpiTimer);
     if (cpiRes.ok) {
       const cpiRaw = await cpiRes.json();
-      const obs = cpiRaw?.observations || (Array.isArray(cpiRaw) ? cpiRaw : []);
+      const obs = cpiRaw?.observations || [];
       if (obs.length >= 13) {
-        const latest  = parseFloat(obs[obs.length - 1]?.value);
-        const yearAgo = parseFloat(obs[obs.length - 13]?.value);
+        const latest  = parseFloat(obs[0]?.value);
+        const yearAgo = parseFloat(obs[12]?.value);
         if (!isNaN(latest) && !isNaN(yearAgo) && yearAgo > 0) {
           cpiYoy  = (latest - yearAgo) / yearAgo * 100;
-          cpiAsOf = obs[obs.length - 1]?.date || null;
+          cpiAsOf = obs[0]?.date || null;
         }
       }
     }
