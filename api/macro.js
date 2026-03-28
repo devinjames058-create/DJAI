@@ -26,21 +26,24 @@ module.exports = async function handler(req, res) {
     }
   };
 
-  // ── FRED series fetch — scans backward to skip weekend/holiday "." entries ──
-  // FRED daily series (e.g. DFEDTARU) mark non-trading days as "."; always use
-  // the most-recent row whose value is a real number.
+  // ── FRED series fetch — official API, scans backward to skip "." entries ────
+  // Uses api.stlouisfed.org (documented, rate-limited at 120 req/min with key).
+  // Returns the most-recent row whose value is a real number (not ".").
+  const FRED_KEY = process.env.FRED_API_KEY;
   const fredLatest = async (seriesId) => {
+    if (!FRED_KEY) return { value: null, date: null, ok: false, error: 'FRED_API_KEY not set' };
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     try {
-      const r = await fetch(
-        `https://fred.stlouisfed.org/graph/fredgraph.json?id=${seriesId}`,
-        { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' }, signal: ctrl.signal }
-      );
+      const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(seriesId)}&api_key=${FRED_KEY}&limit=10&sort_order=asc&file_type=json`;
+      const r = await fetch(url, {
+        headers: { 'User-Agent': 'DJAI Finance dev@djai.app' },
+        signal: ctrl.signal,
+      });
       clearTimeout(timer);
       if (!r.ok) return { value: null, date: null, ok: false };
       const raw = await r.json();
-      const obs = raw?.observations || (Array.isArray(raw) ? raw : []);
+      const obs = raw?.observations || [];
       if (!obs.length) return { value: null, date: null, ok: false };
       // Walk backward to skip "." (missing) entries common on weekends/holidays
       let last = null;
@@ -91,8 +94,9 @@ module.exports = async function handler(req, res) {
   const cpiCtrl = new AbortController();
   const cpiTimer = setTimeout(() => cpiCtrl.abort(), 8000);
   try {
+    if (!FRED_KEY) throw new Error('FRED_API_KEY not set');
     const cpiRes = await fetch(
-      'https://fred.stlouisfed.org/graph/fredgraph.json?id=CPIAUCSL',
+      `https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&api_key=${FRED_KEY}&limit=20&sort_order=asc&file_type=json`,
       { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' }, signal: cpiCtrl.signal }
     );
     clearTimeout(cpiTimer);
