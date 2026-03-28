@@ -247,7 +247,11 @@ body::before {
 .ask-input:focus { border-color: var(--gold); }
 .ask-btn { margin-top: 8px; width: 100%; background: var(--surface3); border: 1px solid var(--border2); border-radius: 6px; padding: 8px; font-size: 11px; color: var(--muted2); cursor: pointer; font-family: 'DM Sans', sans-serif; transition: all .15s; }
 .ask-btn:hover { border-color: var(--gold); color: var(--gold); }
-.followup-result { margin-top: 10px; font-size: 11px; color: var(--muted2); line-height: 1.65; white-space: pre-wrap; }
+.followup-result { margin-top: 10px; font-size: 11px; color: var(--muted2); line-height: 1.65; }
+.followup-result p { margin: 0 0 6px; }
+.followup-result ul { margin: 4px 0 4px 14px; padding: 0; list-style: disc; }
+.followup-result li { margin-bottom: 2px; }
+.followup-result strong { color: var(--text); }
 
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -501,6 +505,43 @@ body::before {
   border-radius:4px; display:inline-block;
 }
 
+/* ── RESPONSIVE — tablet ─────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .main { grid-template-columns: 180px 1fr 220px; }
+}
+
+/* ── RESPONSIVE — mobile ─────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  html, body { overflow: auto; height: auto; }
+  .shell { grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
+  .topbar { flex-wrap: wrap; padding: 10px 16px; gap: 10px; }
+  .brand { flex: 0 0 auto; }
+  .search-bar-wrap { order: 3; flex: 1 1 100%; max-width: 100%; }
+  .topbar-right { margin-left: auto; }
+  .main { grid-template-columns: 1fr; overflow: visible; }
+  .left-sidebar { display: none; } /* collapsed by default on mobile */
+  .right-sidebar { border-left: none; border-top: 1px solid var(--border); }
+  .center { overflow-y: visible; }
+  .results { padding: 12px; }
+  .results-header { flex-direction: column; gap: 10px; }
+  .results-header-left { min-width: 0; }
+  .results-actions { flex-wrap: wrap; gap: 6px; }
+  .overview-grid { grid-template-columns: repeat(2, 1fr); }
+  .thesis-grid { grid-template-columns: 1fr; }
+  .gauges-row { flex-direction: column; align-items: center; }
+  .val-panel, .qp-panel { width: 100%; max-width: 100%; right: 0; }
+  .macro-section-ts { display: none; }
+  .dcf-table { font-size: 11px; }
+  .dcf-result-row { flex-wrap: wrap; gap: 10px; }
+}
+
+@media (max-width: 480px) {
+  .topbar { padding: 8px 12px; }
+  .overview-grid { grid-template-columns: 1fr 1fr; }
+  .results-actions .val-trigger-btn { font-size: 10px; padding: 5px 10px; }
+  .card { padding: 12px; }
+}
+
 </style>
 </head>
 <body>
@@ -513,10 +554,10 @@ body::before {
       <span class="brand-sub">Finance Intelligence</span>
     </div>
     <div class="search-bar-wrap">
-      <input class="search-bar" id="main-search" placeholder="Search any ticker, company, deal, theme, person..." onkeydown="if(event.key==='Enter') runSearch()">
+      <input class="search-bar" id="main-search" placeholder="Search any ticker, company, deal, theme, person..." aria-label="Search ticker, company, ETF, or theme" onkeydown="if(event.key==='Enter') runSearch()">
       <span class="search-icon">⌕</span>
     </div>
-    <button class="search-btn" id="search-btn" onclick="runSearch()">Search</button>
+    <button class="search-btn" id="search-btn" onclick="runSearch()" aria-label="Run search">Search</button>
     <div class="topbar-right">
       <div class="status-dot"></div>
       <span class="status-label">LIVE</span>
@@ -595,8 +636,8 @@ body::before {
         <div class="right-label">Ask a follow-up</div>
       </div>
       <div class="ask-input-wrap">
-        <textarea class="ask-input" id="ask-input" placeholder="Ask anything about your last search..."></textarea>
-        <button class="ask-btn" onclick="askFollowUp()">Ask Claude ✦</button>
+        <textarea class="ask-input" id="ask-input" placeholder="Ask anything about your last search..." aria-label="Ask a follow-up question"></textarea>
+        <button class="ask-btn" onclick="askFollowUp()" aria-label="Submit follow-up question">Ask Claude ✦</button>
         <div class="followup-result" id="followup-result"></div>
       </div>
     </div>
@@ -1122,6 +1163,40 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 3000);
 }
 
+// ── XSS sanitizer — HTML-escapes any untrusted text before innerHTML injection ─
+function _sanitizeText(t) {
+  if (t == null) return '';
+  return String(t)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ── Markdown renderer — safe markdown → HTML for follow-up answer display ──────
+// Sanitizes first, then applies minimal formatting. Never allows raw HTML.
+function _renderMd(text) {
+  if (!text) return '';
+  let s = _sanitizeText(text);
+  // Bold
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+  // Italic
+  s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+  // Inline code
+  s = s.replace(/`([^`\n]+)`/g, '<code style="font-family:DM Mono,monospace;font-size:10px;background:rgba(255,255,255,0.07);padding:1px 4px;border-radius:3px">$1</code>');
+  // Bullet lists — "- item" or "• item"
+  s = s.replace(/^[-•]\s+(.+)$/gm, '<li style="margin-bottom:3px">$1</li>');
+  s = s.replace(/(<li[^>]*>[\s\S]*?<\/li>(\n|$))+/g, (m) => `<ul style="margin:5px 0 5px 14px;list-style:disc">${m}</ul>`);
+  // Numbered lists — "1. item"
+  s = s.replace(/^\d+\.\s+(.+)$/gm, '<li style="margin-bottom:3px">$1</li>');
+  // Paragraph breaks
+  s = s.replace(/\n\n+/g, '</p><p style="margin:0 0 7px">');
+  s = s.replace(/\n/g, '<br>');
+  return `<p style="margin:0 0 7px">${s}</p>`;
+}
+
 function quickSearch(q) {
   document.getElementById('main-search').value = q;
   runSearch();
@@ -1129,6 +1204,7 @@ function quickSearch(q) {
 
 function addToHistory(query) {
   const norm = query.trim();
+  if (norm.length < 2) return; // Don't store empty or single-char entries
   // Dedup: remove any existing entry for this query, then add to top (move-to-top semantics)
   searchHistory = searchHistory.filter(h => normalizeQuery(h.query) !== normalizeQuery(norm));
   searchHistory.unshift({ query: norm, time: new Date() });
@@ -1145,8 +1221,8 @@ function renderHistory() {
   el.innerHTML = searchHistory.map((h, i) => {
     const mins = Math.floor((new Date() - h.time) / 60000);
     const timeLabel = mins === 0 ? 'just now' : mins < 60 ? `${mins}m ago` : `${Math.floor(mins/60)}h ago`;
-    return `<div class="history-item ${i===0?'active':''}" onclick="quickSearch('${h.query.replace(/'/g,"\\'")}')">
-      <div class="history-query">${h.query}</div>
+    return `<div class="history-item ${i===0?'active':''}" data-q="${_sanitizeText(h.query)}" onclick="quickSearch(this.dataset.q)">
+      <div class="history-query">${_sanitizeText(h.query)}</div>
       <div class="history-time">${timeLabel}</div>
     </div>`;
   }).join('');
@@ -1571,15 +1647,15 @@ function renderResults(query, r) {
       ${m.change ? `<div class="metric-sub" style="color:${m.direction==='up'?'var(--green)':m.direction==='down'?'var(--red)':'var(--muted2)'}">${m.change}</div>` : ''}
     </div>`).join('');
 
-  const bullHTML = (r.thesis?.bull || []).map(p => `<div class="thesis-point">${p}</div>`).join('');
-  const bearHTML = (r.thesis?.bear || []).map(p => `<div class="thesis-point">${p}</div>`).join('');
+  const bullHTML = (r.thesis?.bull || []).map(p => `<div class="thesis-point">${_sanitizeText(p)}</div>`).join('');
+  const bearHTML = (r.thesis?.bear || []).map(p => `<div class="thesis-point">${_sanitizeText(p)}</div>`).join('');
 
   const newsHTML = (r.news || []).map(n => `
     <div class="news-item">
       <div class="news-dot" style="background:${n.sentiment==='positive'?'var(--green)':n.sentiment==='negative'?'var(--red)':'var(--gold)'}"></div>
       <div class="news-content">
-        <div class="news-headline">${n.headline}</div>
-        <div class="news-meta">${n.source} · ${n.time}</div>
+        <div class="news-headline">${_sanitizeText(n.headline)}</div>
+        <div class="news-meta">${_sanitizeText(n.source)} · ${_sanitizeText(n.time)}</div>
       </div>
     </div>`).join('');
 
@@ -1595,18 +1671,18 @@ function renderResults(query, r) {
     const m3 = c.metric3 || c[dataKeys[2]] || '—';
     const chgColor = c.direction === 'up' ? 'up' : c.direction === 'down' ? 'down' : '';
     return `<tr>
-      <td>${c.name || '—'}</td>
-      <td class="num">${m1}</td>
-      <td class="num">${m2}</td>
-      <td class="num">${m3}</td>
-      <td class="${chgColor}">${c.change || '—'}</td>
+      <td>${_sanitizeText(c.name) || '—'}</td>
+      <td class="num">${_sanitizeText(m1)}</td>
+      <td class="num">${_sanitizeText(m2)}</td>
+      <td class="num">${_sanitizeText(m3)}</td>
+      <td class="${chgColor}">${_sanitizeText(c.change) || '—'}</td>
     </tr>`;
   }).join('');
 
   const risksHTML = (r.risks || []).map(rk => `
     <div class="risk-item">
-      <span class="risk-badge ${rk.level}">${rk.level}</span>
-      <div class="risk-text">${rk.text}</div>
+      <span class="risk-badge ${_sanitizeText(rk.level)}">${_sanitizeText(rk.level)}</span>
+      <div class="risk-text">${_sanitizeText(rk.text)}</div>
     </div>`).join('');
 
   // Session 2 — entity type, quality score, earnings badge, consensus bar
@@ -1640,7 +1716,7 @@ function renderResults(query, r) {
     <div class="results">
       <div class="results-header">
         <div class="results-header-left">
-          <div class="results-query">${r.title || query}</div>
+          <div class="results-query">${_sanitizeText(r.title || query)}</div>
           <div class="results-meta">AI analysis · ${new Date().toLocaleDateString()}${lastLiveDataAvailable ? ' · ' + renderFreshnessIndicator(window._lastDataMeta, 'runSearch()') : ' · <span style="color:var(--muted2)">No live data</span>'}${entityBadgeHTML}${qualityBadgeHTML}${earningsBadgeHTML}</div>
         </div>
         <div class="results-actions">
@@ -1656,7 +1732,7 @@ function renderResults(query, r) {
       <div class="card" style="animation-delay:.0s">
         <div class="card-header"><span class="card-icon">◈</span><span class="card-title">Overview</span><span style="margin-left:auto">${renderFreshnessIndicator(window._lastDataMeta)}</span></div>
         <div class="card-body">
-          <p style="font-size:12px;color:var(--muted2);line-height:1.7;margin-bottom:14px">${r.overview?.description || ''}</p>
+          <p style="font-size:12px;color:var(--muted2);line-height:1.7;margin-bottom:14px">${_sanitizeText(r.overview?.description)}</p>
           <div class="overview-grid">${metricsHTML}</div>
         </div>
       </div>` : ''}
@@ -1675,7 +1751,7 @@ function renderResults(query, r) {
               ${bearHTML}
             </div>
           </div>
-          <div class="thesis-summary">${r.thesis?.summary || ''}</div>
+          <div class="thesis-summary">${_sanitizeText(r.thesis?.summary)}</div>
         </div>
       </div>` : ''}
 
@@ -1768,7 +1844,7 @@ function renderError(query, detail) {
 
 async function askFollowUp() {
   const question = document.getElementById('ask-input').value.trim();
-  if (!question) return;
+  if (!question) { showToast('Enter a question first'); return; }
   if (!currentQuery) { showToast('Run a search first'); return; }
 
   // Cancel any in-flight follow-up before starting a new one
@@ -1776,8 +1852,7 @@ async function askFollowUp() {
   _fupCtrl = new AbortController();
 
   const resultEl = document.getElementById('followup-result');
-  resultEl.textContent = 'Thinking...';
-  resultEl.style.color = 'var(--muted)';
+  resultEl.innerHTML = '<span style="color:var(--muted)">Thinking...</span>';
 
   const fupCtrl = _fupCtrl;
   const fupTimer = setTimeout(() => fupCtrl.abort(), 30000);
@@ -1804,13 +1879,13 @@ async function askFollowUp() {
       .map(b => b.text)
       .join(' ')
       .trim() || 'No response.';
-    resultEl.textContent = text;
-    resultEl.style.color = 'var(--muted2)';
+    resultEl.innerHTML = _renderMd(text);
+    resultEl.style.color = '';
     document.getElementById('ask-input').value = '';
   } catch(e) {
     clearTimeout(fupTimer);
-    resultEl.textContent = e.name === 'AbortError' ? 'Request timed out.' : 'Error: ' + e.message;
-    resultEl.style.color = 'var(--red)';
+    resultEl.innerHTML = `<span style="color:var(--red)">${e.name === 'AbortError' ? 'Request timed out.' : _sanitizeText('Error: ' + e.message)}</span>`;
+    resultEl.style.color = '';
   }
 }
 
@@ -1989,52 +2064,52 @@ async function runQuickPitch(title) {
     ].map(function(m) {
       return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:8px 10px">' +
         '<div style="font-family:DM Mono,monospace;font-size:8px;color:var(--muted);text-transform:uppercase;margin-bottom:3px">' + m[0] + '</div>' +
-        '<div style="font-family:DM Mono,monospace;font-size:12px;color:var(--text)">' + (m[1]||'—') + '</div></div>';
+        '<div style="font-family:DM Mono,monospace;font-size:12px;color:var(--text)">' + _sanitizeText(m[1]||'—') + '</div></div>';
     }).join('');
 
     var bullHTML = (pitch.bull||[]).map(function(b) {
-      return '<div style="font-size:11px;color:var(--muted2);padding:4px 0;border-bottom:1px solid var(--border)">› ' + b + '</div>';
+      return '<div style="font-size:11px;color:var(--muted2);padding:4px 0;border-bottom:1px solid var(--border)">› ' + _sanitizeText(b) + '</div>';
     }).join('');
 
     var bearHTML = (pitch.bear||[]).map(function(b) {
-      return '<div style="font-size:11px;color:var(--muted2);padding:4px 0;border-bottom:1px solid var(--border)">› ' + b + '</div>';
+      return '<div style="font-size:11px;color:var(--muted2);padding:4px 0;border-bottom:1px solid var(--border)">› ' + _sanitizeText(b) + '</div>';
     }).join('');
 
     var compsHTML = (pitch.comps||[]).map(function(c) {
       var pColor = c.premium && c.premium.startsWith('-') ? 'var(--red)' : 'var(--green)';
       return '<tr style="border-bottom:1px solid var(--border)">' +
-        '<td style="padding:5px 6px;color:var(--text)">' + c.name + ' <span style="color:var(--muted)">(' + c.ticker + ')</span></td>' +
-        '<td style="text-align:right;padding:5px 6px;color:var(--muted2)">' + c.evEbitda + '</td>' +
-        '<td style="text-align:right;padding:5px 6px;color:var(--muted2)">' + c.pe + '</td>' +
-        '<td style="text-align:right;padding:5px 6px;color:' + pColor + '">' + c.premium + '</td></tr>';
+        '<td style="padding:5px 6px;color:var(--text)">' + _sanitizeText(c.name) + ' <span style="color:var(--muted)">(' + _sanitizeText(c.ticker) + ')</span></td>' +
+        '<td style="text-align:right;padding:5px 6px;color:var(--muted2)">' + _sanitizeText(c.evEbitda) + '</td>' +
+        '<td style="text-align:right;padding:5px 6px;color:var(--muted2)">' + _sanitizeText(c.pe) + '</td>' +
+        '<td style="text-align:right;padding:5px 6px;color:' + pColor + '">' + _sanitizeText(c.premium) + '</td></tr>';
     }).join('');
 
     var catalystsHTML = (pitch.catalysts||[]).map(function(c, i) {
-      return '<div style="font-size:11px;color:var(--muted2);padding:5px 0;border-bottom:1px solid var(--border)">' + (i+1) + '. ' + c + '</div>';
+      return '<div style="font-size:11px;color:var(--muted2);padding:5px 0;border-bottom:1px solid var(--border)">' + (i+1) + '. ' + _sanitizeText(c) + '</div>';
     }).join('');
 
     var qcHTML = qc.thesis_score ? (
       '<div style="background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.2);border-radius:10px;padding:14px">' +
-      '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--gold);text-transform:uppercase;margin-bottom:8px">QC Report · Thesis Score ' + qc.thesis_score + '/10</div>' +
-      '<div style="font-size:11px;color:var(--muted2);margin-bottom:6px"><strong style="color:var(--text)">Strongest point:</strong> ' + (qc.strongest_point||'—') + '</div>' +
-      (qc.flag && qc.flag !== 'null' ? '<div style="font-size:11px;color:var(--amber)">⚠ ' + qc.flag + '</div>' : '<div style="font-size:11px;color:var(--green)">✓ No material issues flagged</div>') +
+      '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--gold);text-transform:uppercase;margin-bottom:8px">QC Report · Thesis Score ' + _sanitizeText(qc.thesis_score) + '/10</div>' +
+      '<div style="font-size:11px;color:var(--muted2);margin-bottom:6px"><strong style="color:var(--text)">Strongest point:</strong> ' + _sanitizeText(qc.strongest_point||'—') + '</div>' +
+      (qc.flag && qc.flag !== 'null' ? '<div style="font-size:11px;color:var(--amber)">⚠ ' + _sanitizeText(qc.flag) + '</div>' : '<div style="font-size:11px;color:var(--green)">✓ No material issues flagged</div>') +
       '</div>'
     ) : '';
 
     var qcFlagHTML = (qc.flag && qc.flag !== 'null') ?
-      '<div style="margin-top:8px;font-family:DM Mono,monospace;font-size:10px;color:var(--amber);padding:6px 10px;background:rgba(224,155,60,0.08);border-radius:6px">⚠ QC: ' + qc.flag + '</div>' : '';
+      '<div style="margin-top:8px;font-family:DM Mono,monospace;font-size:10px;color:var(--amber);padding:6px 10px;background:rgba(224,155,60,0.08);border-radius:6px">⚠ QC: ' + _sanitizeText(qc.flag) + '</div>' : '';
 
     body.innerHTML =
       '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">' +
           '<div>' +
             '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Investment Thesis</div>' +
-            '<div style="font-family:Playfair Display,serif;font-size:14px;color:var(--text);line-height:1.5;max-width:500px">' + pitch.thesis + '</div>' +
+            '<div style="font-family:Playfair Display,serif;font-size:14px;color:var(--text);line-height:1.5;max-width:500px">' + _sanitizeText(pitch.thesis) + '</div>' +
           '</div>' +
           '<div style="text-align:right;flex-shrink:0">' +
-            '<div style="font-size:22px;font-weight:600;color:' + ratingColor + ';font-family:Playfair Display,serif">' + pitch.rating + '</div>' +
-            '<div style="font-family:DM Mono,monospace;font-size:11px;color:var(--gold)">Target $' + pitch.targetPrice + '</div>' +
-            '<div style="font-family:DM Mono,monospace;font-size:11px;color:' + upsideColor + '">' + pitch.upside + ' upside</div>' +
+            '<div style="font-size:22px;font-weight:600;color:' + ratingColor + ';font-family:Playfair Display,serif">' + _sanitizeText(pitch.rating) + '</div>' +
+            '<div style="font-family:DM Mono,monospace;font-size:11px;color:var(--gold)">Target $' + _sanitizeText(String(pitch.targetPrice)) + '</div>' +
+            '<div style="font-family:DM Mono,monospace;font-size:11px;color:' + upsideColor + '">' + _sanitizeText(pitch.upside) + ' upside</div>' +
           '</div>' +
         '</div>' + qcFlagHTML +
       '</div>' +
@@ -2055,19 +2130,19 @@ async function runQuickPitch(title) {
             '<th style="text-align:right;padding:4px 6px;color:var(--muted);font-weight:400">Prem/Disc</th>' +
           '</tr></thead><tbody>' + compsHTML +
           '<tr style="border-top:2px solid var(--border2)">' +
-            '<td style="padding:5px 6px;color:var(--gold)">' + pitch.ticker + ' (Subject)</td>' +
-            '<td style="text-align:right;padding:5px 6px;color:var(--gold)">' + (pitch.keyMetrics&&pitch.keyMetrics.evEbitda||'—') + '</td>' +
-            '<td style="text-align:right;padding:5px 6px;color:var(--gold)">' + (pitch.keyMetrics&&pitch.keyMetrics.pe||'—') + '</td>' +
+            '<td style="padding:5px 6px;color:var(--gold)">' + _sanitizeText(pitch.ticker) + ' (Subject)</td>' +
+            '<td style="text-align:right;padding:5px 6px;color:var(--gold)">' + _sanitizeText(pitch.keyMetrics&&pitch.keyMetrics.evEbitda||'—') + '</td>' +
+            '<td style="text-align:right;padding:5px 6px;color:var(--gold)">' + _sanitizeText(pitch.keyMetrics&&pitch.keyMetrics.pe||'—') + '</td>' +
             '<td style="text-align:right;padding:5px 6px;color:var(--gold)">—</td>' +
           '</tr></tbody></table>' +
       '</div>' +
       '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">' +
         '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">Analysis</div>' +
-        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Business:</strong> ' + (pitch.businessOverview||'—') + '</div>' +
-        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Financials:</strong> ' + (pitch.financialAnalysis||'—') + '</div>' +
-        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Valuation:</strong> ' + (pitch.valSummary||'—') + '</div>' +
-        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Risks:</strong> ' + (pitch.risks||'—') + '</div>' +
-        '<div style="font-size:11px;color:var(--text);padding-top:8px;border-top:1px solid var(--border)">' + (pitch.conclusion||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Business:</strong> ' + _sanitizeText(pitch.businessOverview||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Financials:</strong> ' + _sanitizeText(pitch.financialAnalysis||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Valuation:</strong> ' + _sanitizeText(pitch.valSummary||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px"><strong style="color:var(--text)">Risks:</strong> ' + _sanitizeText(pitch.risks||'—') + '</div>' +
+        '<div style="font-size:11px;color:var(--text);padding-top:8px;border-top:1px solid var(--border)">' + _sanitizeText(pitch.conclusion||'—') + '</div>' +
       '</div>' +
       '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">' +
         '<div style="font-family:DM Mono,monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Key Catalysts</div>' + catalystsHTML +
@@ -2657,16 +2732,16 @@ function renderGauges() {
         <div class="gauge-wrap">
           <canvas id="gauge-signal" width="140" height="76"></canvas>
         </div>
-        <div class="gauge-reading" style="color:${signalColor}">${r.signal}</div>
-        <div class="gauge-rationale">${r.signalRationale}</div>
+        <div class="gauge-reading" style="color:${signalColor}">${_sanitizeText(r.signal)}</div>
+        <div class="gauge-rationale">${_sanitizeText(r.signalRationale)}</div>
       </div>
       <div class="gauge-card">
         <div class="gauge-label">Valuation</div>
         <div class="gauge-wrap">
           <canvas id="gauge-val" width="140" height="76"></canvas>
         </div>
-        <div class="gauge-reading" style="color:${valColor}">${r.valuation}</div>
-        <div class="gauge-rationale">${r.valuationRationale}</div>
+        <div class="gauge-reading" style="color:${valColor}">${_sanitizeText(r.valuation)}</div>
+        <div class="gauge-rationale">${_sanitizeText(r.valuationRationale)}</div>
       </div>
     </div>
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
@@ -2774,19 +2849,19 @@ function renderDCF() {
       <div style="display:flex;gap:16px;margin-bottom:14px;flex-wrap:wrap">
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px">
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">WACC</div>
-          <input class="dcf-input" id="wacc-input" value="${(Number(d.wacc)*100).toFixed(1)}" onchange="recalcDCF()" style="width:60px">%
+          <input class="dcf-input" id="wacc-input" value="${(Number(d.wacc)*100).toFixed(1)}" onchange="recalcDCF()" style="width:60px" aria-label="WACC percentage">%
         </div>
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px">
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Terminal Growth</div>
-          <input class="dcf-input" id="tgr-input" value="${(Number(d.terminalGrowth)*100).toFixed(1)}" onchange="recalcDCF()" style="width:60px">%
+          <input class="dcf-input" id="tgr-input" value="${(Number(d.terminalGrowth)*100).toFixed(1)}" onchange="recalcDCF()" style="width:60px" aria-label="Terminal growth rate percentage">%
         </div>
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px">
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Shares Out (B)</div>
-          <input class="dcf-input" id="shares-input" value="${Number(d.sharesOutstanding).toFixed(2)}" onchange="recalcDCF()" style="width:60px">
+          <input class="dcf-input" id="shares-input" value="${Number(d.sharesOutstanding).toFixed(2)}" onchange="recalcDCF()" style="width:60px" aria-label="Shares outstanding in billions">
         </div>
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px">
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Net Debt ($B)</div>
-          <input class="dcf-input" id="debt-input" value="${Number(d.netDebt).toFixed(1)}" onchange="recalcDCF()" style="width:60px">
+          <input class="dcf-input" id="debt-input" value="${Number(d.netDebt).toFixed(1)}" onchange="recalcDCF()" style="width:60px" aria-label="Net debt in billions USD">
         </div>
       </div>
     </div>
@@ -2802,15 +2877,15 @@ function renderDCF() {
     </div>
     <div class="dcf-result-row" id="dcf-results">
       <div class="dcf-result">
-        <div class="dcf-result-val" id="dcf-impl-price">$${Number(d.impliedPrice).toFixed(2)}</div>
+        <div class="dcf-result-val" id="dcf-impl-price">${isFinite(Number(d.impliedPrice)) && Number(d.impliedPrice) > 0 ? '$' + Number(d.impliedPrice).toFixed(2) : '—'}</div>
         <div class="dcf-result-label">Implied Price</div>
       </div>
       <div class="dcf-result">
-        <div class="dcf-result-val" style="color:var(--muted2)">$${Number(d.currentPrice).toFixed(2)}</div>
+        <div class="dcf-result-val" style="color:var(--muted2)">${isFinite(Number(d.currentPrice)) && Number(d.currentPrice) > 0 ? '$' + Number(d.currentPrice).toFixed(2) : '—'}</div>
         <div class="dcf-result-label">Current Price</div>
       </div>
       <div class="dcf-result">
-        <div class="dcf-result-val" id="dcf-upside" style="color:${d.upsideDownside && d.upsideDownside.startsWith('+') ? 'var(--green)' : 'var(--red)'}">${d.upsideDownside}</div>
+        <div class="dcf-result-val" id="dcf-upside" style="color:${d.upsideDownside && d.upsideDownside.startsWith('+') ? 'var(--green)' : 'var(--red)'}">${_sanitizeText(d.upsideDownside) || '—'}</div>
         <div class="dcf-result-label">Upside / Downside</div>
       </div>
     </div>`;
@@ -2829,36 +2904,58 @@ function _doRecalcDCF() {
   if (!valData || !valData.dcf) return;
   const d = valData.dcf;
   const wacc = parseFloat(document.getElementById('wacc-input')?.value || d.wacc * 100) / 100;
-  const tgr = parseFloat(document.getElementById('tgr-input')?.value || d.terminalGrowth * 100) / 100;
+  const tgr  = parseFloat(document.getElementById('tgr-input')?.value  || d.terminalGrowth * 100) / 100;
   // toBillions: normalize raw dollar amounts Claude may have output to billions
   const toBillions = (v) => { const n = Number(v); return isNaN(n) ? 0 : (Math.abs(n) > 1e6 ? n / 1e9 : n); };
   const shares  = parseFloat(document.getElementById('shares-input')?.value  ?? toBillions(d.sharesOutstanding));
   const netDebt = parseFloat(document.getElementById('debt-input')?.value    ?? toBillions(d.netDebt));
 
+  const implEl  = document.getElementById('dcf-impl-price');
+  const upEl    = document.getElementById('dcf-upside');
+  const errEl   = document.getElementById('dcf-results');
+
+  // Guard: terminal growth must be < WACC — otherwise Gordon Growth blows up
+  if (tgr >= wacc) {
+    if (implEl) { implEl.textContent = '—'; implEl.style.color = 'var(--amber)'; }
+    if (upEl)   { upEl.textContent = 'Terminal growth ≥ WACC — adjust inputs'; upEl.style.color = 'var(--amber)'; }
+    return;
+  }
+  // Guard: shares must be positive
+  if (!shares || shares <= 0 || isNaN(shares)) {
+    if (implEl) implEl.textContent = '—';
+    if (upEl)   { upEl.textContent = 'Shares outstanding must be > 0'; upEl.style.color = 'var(--amber)'; }
+    return;
+  }
+
   let totalPVFCF = 0;
   const projs = d.projections || [];
   projs.forEach((p, i) => {
     const df = 1 / Math.pow(1 + wacc, i + 1);
-    const pvFcf = toBillions(p.fcf) * df;
-    totalPVFCF += pvFcf;
+    totalPVFCF += toBillions(p.fcf) * df;
   });
 
-  const lastFCF = projs.length ? toBillions(projs[projs.length - 1].fcf) : 0;
-  const termVal = wacc !== tgr ? (lastFCF * (1 + tgr)) / (wacc - tgr) : (lastFCF * 20);
+  const lastFCF   = projs.length ? toBillions(projs[projs.length - 1].fcf) : 0;
+  const termVal   = (lastFCF * (1 + tgr)) / (wacc - tgr);
   const pvTermVal = termVal / Math.pow(1 + wacc, projs.length);
-  const totalPV = totalPVFCF + pvTermVal;
+  const totalPV   = totalPVFCF + pvTermVal;
   const equityVal = totalPV - netDebt;
   const impliedPrice = equityVal / shares;
-  const upside = ((impliedPrice - d.currentPrice) / d.currentPrice * 100).toFixed(1);
-  const upsideNum = parseFloat(upside);
-  const upsideStr = (upsideNum > 0 ? '+' : '') + upside + '%';
 
-  const implEl = document.getElementById('dcf-impl-price');
-  const upEl = document.getElementById('dcf-upside');
-  if (implEl) implEl.textContent = '$' + impliedPrice.toFixed(2);
+  // Guard: result must be a finite number
+  if (!isFinite(impliedPrice) || isNaN(impliedPrice)) {
+    if (implEl) implEl.textContent = '—';
+    if (upEl)   { upEl.textContent = 'Cannot compute — check inputs'; upEl.style.color = 'var(--amber)'; }
+    return;
+  }
+
+  const currentP  = d.currentPrice && d.currentPrice > 0 ? d.currentPrice : null;
+  const upsideNum = currentP ? ((impliedPrice - currentP) / currentP * 100) : null;
+  const upsideStr = upsideNum != null ? (upsideNum > 0 ? '+' : '') + upsideNum.toFixed(1) + '%' : '—';
+
+  if (implEl) { implEl.textContent = '$' + impliedPrice.toFixed(2); implEl.style.color = ''; }
   if (upEl) {
     upEl.textContent = upsideStr;
-    upEl.style.color = upsideNum > 0 ? 'var(--green)' : 'var(--red)';
+    upEl.style.color = upsideNum == null ? 'var(--muted2)' : upsideNum > 0 ? 'var(--green)' : 'var(--red)';
   }
 }
 
@@ -2874,9 +2971,9 @@ function renderComps() {
     const col3 = r.ps || r.metric3 || '—';
     const col4 = r.evRevenue || r.metric4 || '—';
     return `<tr style="${r.isTarget ? 'background:rgba(201,168,76,0.06)' : ''}">
-      <td style="${r.isTarget ? 'color:var(--gold)' : ''}">${r.name}${r.isTarget ? ' ◈' : ''}</td>
-      <td>${col1}</td><td>${col2}</td><td>${col3}</td><td>${col4}</td>
-      <td style="color:${discColor}">${r.premDisc || '—'}</td>
+      <td style="${r.isTarget ? 'color:var(--gold)' : ''}">${_sanitizeText(r.name)}${r.isTarget ? ' ◈' : ''}</td>
+      <td>${_sanitizeText(col1)}</td><td>${_sanitizeText(col2)}</td><td>${_sanitizeText(col3)}</td><td>${_sanitizeText(col4)}</td>
+      <td style="color:${discColor}">${_sanitizeText(r.premDisc) || '—'}</td>
     </tr>`;
   }).join('');
 
@@ -2884,7 +2981,7 @@ function renderComps() {
     <div class="val-section">
       <div class="val-section-title">Trading Comps</div>
       <table class="dcf-table">
-        <thead><tr>${(c.headers||[]).map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <thead><tr>${(c.headers||[]).map(h=>`<th>${_sanitizeText(h)}</th>`).join('')}</tr></thead>
         <tbody>${rowsHTML}</tbody>
         <tfoot>
           <tr class="total">
@@ -2911,13 +3008,13 @@ function renderWriteUp() {
   return `
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--text)">${valData.company || valData.query}</div>
+        <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--text)">${_sanitizeText(valData.company || valData.query)}</div>
         <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
       </div>
       ${sections.map(s => `
         <div class="writeup-section">
-          <h4>${s.title}</h4>
-          <p>${s.content || '—'}</p>
+          <h4>${_sanitizeText(s.title)}</h4>
+          <p>${_sanitizeText(s.content) || '—'}</p>
         </div>`).join('')}
     </div>`;
 }

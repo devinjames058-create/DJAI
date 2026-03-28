@@ -1,0 +1,15 @@
+{
+  "name": "djai",
+  "version": "1.0.0",
+  "description": "DJAI Finance Intelligence",
+  "private": true,
+  "scripts": {
+    "test": "node tests/run-all.js",
+    "test:trust": "node tests/unit/trust.test.js",
+    "test:metrics": "node tests/unit/metrics.test.js",
+    "test:reconcile": "node tests/unit/reconcile.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
