@@ -1395,7 +1395,7 @@ When given a search query, return a JSON object with this exact structure:
     "summary": "2-3 sentence balanced analyst summary with a directional lean"
   },
   "news": [
-    {"headline": "headline text", "source": "Source Name", "time": "X days ago", "sentiment": "positive|negative|neutral"}
+    {"headline": "actual article headline", "source": "Publication Name", "url": "https://actual-article-url", "daysAgo": 0, "sentiment": "positive|negative|neutral"}
   ],
   "comps": [
     {"name": "Company/Entity", "metric1": "Market Cap", "metric2": "Revenue", "metric3": "Op Margin", "change": "+X.X%", "direction": "up|down"}
@@ -1408,6 +1408,7 @@ When given a search query, return a JSON object with this exact structure:
 }
 
 You MUST return ALL of these sections in your JSON — do not skip any.
+For the "news" array: return real articles you found via web search. Each item must include the actual article URL in the "url" field, the real publication name in "source", and daysAgo as an integer (0 = today). Only include articles with real URLs — do not fabricate URLs.
 Return valid JSON only. No markdown. No explanation. No truncation.`;
 
   // ── Step 1: Claude call — create controller BEFORE queuing ───────────────
@@ -1682,14 +1683,24 @@ function renderResults(query, r) {
   const bullHTML = (r.thesis?.bull || []).map(p => `<div class="thesis-point">${_sanitizeText(p)}</div>`).join('');
   const bearHTML = (r.thesis?.bear || []).map(p => `<div class="thesis-point">${_sanitizeText(p)}</div>`).join('');
 
-  const newsHTML = (r.news || []).map(n => `
+  const newsHTML = (r.news || []).map(n => {
+    const dotColor = n.sentiment==='positive' ? 'var(--green)' : n.sentiment==='negative' ? 'var(--red)' : 'var(--gold)';
+    const timeStr = n.daysAgo != null
+      ? (Number(n.daysAgo) === 0 ? 'today' : Number(n.daysAgo) === 1 ? '1 day ago' : Number(n.daysAgo) + ' days ago')
+      : _sanitizeText(n.time || '');
+    const safeUrl = (n.url && (n.url.startsWith('https://') || n.url.startsWith('http://'))) ? n.url : null;
+    const headlineEl = safeUrl
+      ? `<a href="${safeUrl}" target="_blank" rel="noopener" class="news-headline" style="color:var(--gold);text-decoration:none;display:block">${_sanitizeText(n.headline)} <span class="news-link-icon">↗</span></a>`
+      : `<div class="news-headline">${_sanitizeText(n.headline)}</div>`;
+    return `
     <div class="news-item">
-      <div class="news-dot" style="background:${n.sentiment==='positive'?'var(--green)':n.sentiment==='negative'?'var(--red)':'var(--gold)'}"></div>
+      <div class="news-dot" style="background:${dotColor}"></div>
       <div class="news-content">
-        <div class="news-headline">${_sanitizeText(n.headline)}</div>
-        <div class="news-meta">${_sanitizeText(n.source)} · ${_sanitizeText(n.time)}</div>
+        ${headlineEl}
+        <div class="news-meta">${_sanitizeText(n.source)} · ${timeStr}</div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   const compsHeaders = r.compsHeaders || ['Name', 'Metric 1', 'Metric 2', 'Metric 3', 'Chg'];
   const compsHeadHTML = compsHeaders.map(h => `<th>${h}</th>`).join('');
@@ -2368,7 +2379,7 @@ async function loadFinancials(bodyId = 'fin-body') {
     body.innerHTML = `<div style="padding:24px;color:var(--muted2);font-size:12px">
       ${timedOut ? 'Request timed out — try again.' : _sanitizeText('Error: ' + e.message)}
       <div style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">
-        Check that FMP_API_KEY is set in Vercel environment variables.
+        SEC EDGAR data may be temporarily unavailable or the ticker may not have usable annual companyfacts.
       </div>
     </div>`;
   }
@@ -2387,7 +2398,7 @@ function _finSwitchTab(tab) {
 function _renderFinPanel(body, ticker, data, activeSub) {
   const hasAny = data.incomeStatement?.length || data.balanceSheet?.length || data.cashFlow?.length;
   if (!hasAny) {
-    body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Financial statements not available for this ticker via FMP.</div>';
+    body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Financial statements not available for this ticker via SEC EDGAR.</div>';
     return;
   }
   body.innerHTML = `
@@ -2399,7 +2410,7 @@ function _renderFinPanel(body, ticker, data, activeSub) {
     <div style="padding:16px 16px 0">
       <div class="fin-table-wrap" id="fin-stmt-body">${_renderFinStmt(activeSub, data)}</div>
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:10px;padding-bottom:4px">
-        Source: FMP (SEC filings) · Annual · Most recent on left
+        Source: SEC EDGAR companyfacts · Annual filings · Most recent on left
       </div>
     </div>
     <div class="fin-chat" id="fin-chat-wrap">
@@ -2568,7 +2579,7 @@ async function _finChatAsk() {
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 600,
         useSearch: true,
-        system: `You are a financial analyst assistant with access to ${ticker}'s financial statements (last 5 annual periods from FMP/SEC filings). Answer questions about financial performance, trends, and metrics. Be specific with numbers and always cite the fiscal year. Use the data provided — do not fabricate numbers.`,
+        system: `You are a financial analyst assistant with access to ${ticker}'s financial statements (last 5 annual periods from SEC EDGAR annual filings). Answer questions about financial performance, trends, and metrics. Be specific with numbers and always cite the fiscal year. Use the data provided — do not fabricate numbers.`,
         messages,
       }),
     });
@@ -2629,7 +2640,7 @@ function _buildFinContext(ticker, data) {
     `${yr(r)}: OpCF ${fmt(r.operatingCashFlow)}, CapEx ${fmt(r.capitalExpenditure)}, FCF ${fmt(r.freeCashFlow)}, Dividends ${fmt(r.dividendsPaid)}, Buybacks ${fmt(r.commonStockRepurchased)}`
   ).join(' | ');
 
-  return `${ticker} FINANCIAL DATA (FMP/SEC, last 2 annual periods):\nIncome Statement: ${isLines}\nBalance Sheet: ${bsLines}\nCash Flow: ${cfLines}`;
+  return `${ticker} FINANCIAL DATA (SEC EDGAR, last 2 annual periods):\nIncome Statement: ${isLines}\nBalance Sheet: ${bsLines}\nCash Flow: ${cfLines}`;
 }
 
 async function loadFilings(bodyId = 'fil-body') {
