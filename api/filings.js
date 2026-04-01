@@ -79,50 +79,58 @@ module.exports = async function handler(req, res) {
     const annualFormTypes = ['10-K', '20-F'];
 
     // Extract key financial metrics from XBRL data
-    const getLatestAnnual = (concept) => {
-      const data = facts[concept]?.units?.USD;
-      if (!data) return null;
-      const annual = data.filter(d => annualFormTypes.includes(d.form) && d.val != null)
-        .sort((a, b) => new Date(b.end) - new Date(a.end));
-      return annual.slice(0, 4).map(d => ({ value: d.val, period: d.end, filed: d.filed }));
+    const getLatestAnnual = (concept, preferredUnits = []) => {
+      const units = facts[concept]?.units;
+      if (!units) return null;
+      const unitKeys = [...preferredUnits, ...Object.keys(units).filter(k => !preferredUnits.includes(k))];
+      for (const unit of unitKeys) {
+        const data = units[unit];
+        if (!Array.isArray(data)) continue;
+        const annual = data
+          .filter(d => annualFormTypes.includes(d.form) && d.val != null)
+          .sort((a, b) => new Date(b.end) - new Date(a.end));
+        if (!annual.length) continue;
+        return annual.slice(0, 4).map(d => ({ value: d.val, period: d.end, filed: d.filed, unit }));
+      }
+      return null;
     };
 
     // IFRS-full uses different concept names than US-GAAP for many metrics.
     // Each line tries US-GAAP name first, then IFRS-full equivalent as fallback.
     const financials = {
       // Income Statement
-      revenue: getLatestAnnual('Revenues')
-        || getLatestAnnual('RevenueFromContractWithCustomerExcludingAssessedTax')
-        || getLatestAnnual('SalesRevenueNet')
-        || getLatestAnnual('Revenue'),                                    // ifrs-full
-      grossProfit: getLatestAnnual('GrossProfit'),                        // same in both
-      operatingIncome: getLatestAnnual('OperatingIncomeLoss')
-        || getLatestAnnual('ProfitLossFromOperatingActivities'),          // ifrs-full
-      netIncome: getLatestAnnual('NetIncomeLoss')
-        || getLatestAnnual('ProfitLoss'),                                 // ifrs-full
-      ebitda: getLatestAnnual('OperatingIncomeLoss')
-        || getLatestAnnual('ProfitLossFromOperatingActivities'),          // approximation
-      eps: getLatestAnnual('EarningsPerShareBasic')
-        || getLatestAnnual('BasicEarningsLossPerShare'),                  // ifrs-full
-      eps_diluted: getLatestAnnual('EarningsPerShareDiluted')
-        || getLatestAnnual('DilutedEarningsLossPerShare'),                // ifrs-full
+      revenue: getLatestAnnual('Revenues', ['USD'])
+        || getLatestAnnual('RevenueFromContractWithCustomerExcludingAssessedTax', ['USD'])
+        || getLatestAnnual('SalesRevenueNet', ['USD'])
+        || getLatestAnnual('Revenue', ['USD']),                           // ifrs-full
+      grossProfit: getLatestAnnual('GrossProfit', ['USD']),               // same in both
+      operatingIncome: getLatestAnnual('OperatingIncomeLoss', ['USD'])
+        || getLatestAnnual('ProfitLossFromOperatingActivities', ['USD']), // ifrs-full
+      netIncome: getLatestAnnual('NetIncomeLoss', ['USD'])
+        || getLatestAnnual('ProfitLoss', ['USD']),                        // ifrs-full
+      ebitda: getLatestAnnual('OperatingIncomeLoss', ['USD'])
+        || getLatestAnnual('ProfitLossFromOperatingActivities', ['USD']), // approximation
+      eps: getLatestAnnual('EarningsPerShareBasic', ['USD/shares'])
+        || getLatestAnnual('BasicEarningsLossPerShare', ['USD/shares']),  // ifrs-full
+      eps_diluted: getLatestAnnual('EarningsPerShareDiluted', ['USD/shares'])
+        || getLatestAnnual('DilutedEarningsLossPerShare', ['USD/shares']),// ifrs-full
       // Balance Sheet
-      totalAssets: getLatestAnnual('Assets'),                            // same in both
-      totalLiabilities: getLatestAnnual('Liabilities'),                  // same in both
-      stockholderEquity: getLatestAnnual('StockholdersEquity')
-        || getLatestAnnual('Equity'),                                     // ifrs-full
-      cashAndEquivalents: getLatestAnnual('CashAndCashEquivalentsAtCarryingValue')
-        || getLatestAnnual('CashAndCashEquivalents'),                     // ifrs-full
-      longTermDebt: getLatestAnnual('LongTermDebt')
-        || getLatestAnnual('NoncurrentLiabilities')
-        || getLatestAnnual('LongtermBorrowings'),                         // ifrs-full
+      totalAssets: getLatestAnnual('Assets', ['USD']),                   // same in both
+      totalLiabilities: getLatestAnnual('Liabilities', ['USD']),         // same in both
+      stockholderEquity: getLatestAnnual('StockholdersEquity', ['USD'])
+        || getLatestAnnual('Equity', ['USD']),                           // ifrs-full
+      cashAndEquivalents: getLatestAnnual('CashAndCashEquivalentsAtCarryingValue', ['USD'])
+        || getLatestAnnual('CashAndCashEquivalents', ['USD']),           // ifrs-full
+      longTermDebt: getLatestAnnual('LongTermDebt', ['USD'])
+        || getLatestAnnual('NoncurrentLiabilities', ['USD'])
+        || getLatestAnnual('LongtermBorrowings', ['USD']),               // ifrs-full
       // Cash Flow
-      operatingCashflow: getLatestAnnual('NetCashProvidedByUsedInOperatingActivities')
-        || getLatestAnnual('CashFlowsFromUsedInOperatingActivities'),     // ifrs-full
-      capex: getLatestAnnual('PaymentsToAcquirePropertyPlantAndEquipment')
-        || getLatestAnnual('PurchaseOfPropertyPlantAndEquipment'),        // ifrs-full
-      dividendsPaid: getLatestAnnual('PaymentsOfDividends')
-        || getLatestAnnual('DividendsPaid'),                              // ifrs-full
+      operatingCashflow: getLatestAnnual('NetCashProvidedByUsedInOperatingActivities', ['USD'])
+        || getLatestAnnual('CashFlowsFromUsedInOperatingActivities', ['USD']), // ifrs-full
+      capex: getLatestAnnual('PaymentsToAcquirePropertyPlantAndEquipment', ['USD'])
+        || getLatestAnnual('PurchaseOfPropertyPlantAndEquipment', ['USD']), // ifrs-full
+      dividendsPaid: getLatestAnnual('PaymentsOfDividends', ['USD'])
+        || getLatestAnnual('DividendsPaid', ['USD']),                    // ifrs-full
     };
 
     return res.status(200).json({

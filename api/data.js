@@ -142,6 +142,10 @@ module.exports = async function handler(req, res) {
   const fmpRatio   = Array.isArray(fmpRatioRaw)   ? fmpRatioRaw[0]   : fmpRatioRaw;
   const fmpDcf     = Array.isArray(fmpDcfRaw)     ? fmpDcfRaw[0]     : fmpDcfRaw;
   const fmpNews    = Array.isArray(fmpNewsRaw)    ? fmpNewsRaw       : [];
+  const hadPrimaryFailure = [
+    fmpQuoteRes, fmpProfileRes, fmpIncomeRes, fmpBalanceRes, fmpCashRes,
+    fmpKMRes, fmpRatioRes, fmpDcfRes, fmpNewsRes
+  ].some(r => r.status !== 'fulfilled');
 
   // ── FRED — Risk-Free Rate ──────────────────────────────────────────────────
   let riskFreeRate = null;
@@ -342,7 +346,7 @@ module.exports = async function handler(req, res) {
   // ── Cache write + meta ──────────────────────────────────────────────────────
   // If primary data came back empty (e.g. FMP 429 / bad ticker), serve stale cache
   const primaryMissing = aggregated.quote?.price == null;
-  if (primaryMissing && hit) {
+  if ((primaryMissing || hadPrimaryFailure) && hit) {
     return res.status(200).json({
       success: true,
       data: hit.data,
@@ -352,21 +356,24 @@ module.exports = async function handler(req, res) {
         timestamp: new Date(hit.time).toISOString(),
         ageSeconds: Math.round((now - hit.time) / 1000),
         requestId: reqId,
-        error: 'FMP returned empty data — serving cached response'
+        error: hadPrimaryFailure
+          ? 'One or more FMP requests failed — serving cached response'
+          : 'FMP returned empty data — serving cached response'
       }
     });
   }
   // Good fresh data — cache it and return with live meta
-  if (!primaryMissing) _dataCache.set(sym, { data: aggregated, time: now });
+  if (!primaryMissing && !hadPrimaryFailure) _dataCache.set(sym, { data: aggregated, time: now });
   return res.status(200).json({
     success: true,
     data: aggregated,
     meta: {
-      source: 'fmp', cached: false, stale: primaryMissing,
+      source: 'fmp', cached: false, stale: primaryMissing || hadPrimaryFailure,
       servedStaleAfterError: false,
       timestamp: new Date().toISOString(),
       ageSeconds: 0,
-      requestId: reqId
+      requestId: reqId,
+      warning: hadPrimaryFailure ? 'One or more upstream requests failed; response was not cached' : undefined
     }
   });
 };
