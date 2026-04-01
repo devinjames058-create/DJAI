@@ -2396,7 +2396,16 @@ function _finSwitchTab(tab) {
 }
 
 function _renderFinPanel(body, ticker, data, activeSub) {
-  const hasAny = data.incomeStatement?.length || data.balanceSheet?.length || data.cashFlow?.length;
+  // Check for actual non-null values in key fields, not just array length.
+  // All-null rows (EDGAR returned years but couldn't match this company's tags)
+  // should be treated the same as no data at all.
+  function _rowsHaveData(arr, fields) {
+    return Array.isArray(arr) && arr.some(r => fields.some(f => r[f] != null));
+  }
+  const hasAny =
+    _rowsHaveData(data.incomeStatement, ['revenue','netIncome','operatingIncome','grossProfit']) ||
+    _rowsHaveData(data.balanceSheet,    ['totalAssets','cashAndCashEquivalents','totalStockholdersEquity','longTermDebt']) ||
+    _rowsHaveData(data.cashFlow,        ['operatingCashFlow','freeCashFlow','capitalExpenditure']);
   if (!hasAny) {
     body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">Financial statements not available for this ticker via SEC EDGAR.</div>';
     return;

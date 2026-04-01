@@ -3,7 +3,7 @@
 // Primary: SEC EDGAR companyfacts (no key required)
 // Fallback: FMP income/balance/cashflow endpoints (requires FMP_API_KEY)
 // Supports GET ?ticker=AAPL and POST { ticker: "AAPL" }.
-// Cache keys use "v4_" prefix to bust stale entries with wrong EDGAR quarterly data.
+// Cache keys use "v5_" prefix to bust stale entries with wrong EDGAR dedup results.
 
 const TICKER_INDEX_URL = 'https://www.sec.gov/files/company_tickers.json';
 const EDGAR_FACTS_URL  = (cik) => `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`;
@@ -16,7 +16,7 @@ const ANNUAL_FORMS = new Set(['10-K', '10-K/A', '20-F', '20-F/A', '40-F', '40-F/
 // ── In-memory caches ──────────────────────────────────────────────────────────
 let   _tickerIndex = null;         // { data: normalizedTicker→{cik,name}, time }
 const _factsCache  = new Map();    // paddedCik → { data, time }
-const _finCache    = new Map();    // 'v4_'+ticker → { data, time }
+const _finCache    = new Map();    // 'v5_'+ticker → { data, time }
 
 const TICKER_TTL = 24 * 60 * 60 * 1000;
 const FACTS_TTL  = 7  * 24 * 60 * 60 * 1000;
@@ -94,18 +94,17 @@ async function _getCompanyFacts(paddedCik) {
 //
 // Returns: fy (number) → { val (number), end (string|null) }
 // Priority: first tag in the array that has data for a given fiscal year wins.
-// Within a tag, latest `filed` date wins (handles amendments); ties broken by
-// latest `end` date (prefers longer period).
 //
-// Period filter (THE CRITICAL RULE):
-//   Duration facts have a `start` field. For these we REQUIRE fp === 'FY'
-//   explicitly — any other fp (Q1/Q2/Q3/Q4/null/undefined) is rejected.
-//   Instant facts (balance-sheet point-in-time values) have NO `start` field;
-//   they never carry an fp and are accepted from any ANNUAL_FORMS filing.
+// Filters applied per entry:
+//   1. Form must be in ANNUAL_FORMS (10-K / 10-K/A / 20-F / 20-F/A / 40-F/A)
+//   2. Duration facts (entry.start is present) must have fp === 'FY' explicitly.
+//      Instant facts (no start — balance-sheet snapshots) carry no fp; allowed.
 //
-// BUG THAT WAS HERE: `if (entry.fp && entry.fp !== 'FY') continue` — the
-// `entry.fp &&` guard caused null/undefined fp to pass through even for
-// duration facts, allowing quarterly amounts filed inside a 10-K to survive.
+// Deduplication within a tag/FY pair:
+//   PRIMARY  — largest val wins  (annual $215B always beats quarterly $60B)
+//   FALLBACK — latest filed date (picks most-recent amendment when vals match)
+//
+// Revenue tags get verbose console.log so Vercel logs can confirm annual values.
 
 const _REV_TAGS = new Set([
   'Revenues',
@@ -141,8 +140,8 @@ function _extractByTags(facts, tags, opts = {}) {
           if (isRevTag) dbgFormPass++;
 
           // ── 2. Period filter ─────────────────────────────────────────────
-          // Duration fact: `start` is present → must be explicitly FY.
-          // Instant fact:  `start` absent     → no fp to check, allow through.
+          // Duration facts (start present) must be explicitly FY.
+          // Instant facts (no start) are balance-sheet point-in-time — allow.
           if (entry.start != null && entry.fp !== 'FY') continue;
           if (isRevTag) dbgFpPass++;
 
@@ -152,27 +151,35 @@ function _extractByTags(facts, tags, opts = {}) {
             : parseInt(entry.end?.slice(0, 4), 10);
           if (!fy || isNaN(fy)) continue;
 
-          // ── 4. Deduplication: latest filed wins; end-date breaks ties ────
-          const filed = entry.filed || entry.end || '';
-          const cur   = tagMap[fy];
-          const betterFiled = !cur || filed > cur.filed;
-          const sameFiled   = cur  && filed === cur.filed;
-          const betterEnd   = sameFiled && (entry.end || '') > (cur.end || '');
-          if (betterFiled || betterEnd) {
-            tagMap[fy] = { val: Number(entry.val), filed, end: entry.end || null, fp: entry.fp || null };
+          const entryVal = Number(entry.val);
+          const filed    = entry.filed || entry.end || '';
+
+          // Verbose per-fact log for Revenue tags (shows up in Vercel fn logs)
+          if (isRevTag) {
+            console.log(`[EDGAR rev] PASS tag=${tag} form=${entry.form} fp=${entry.fp ?? 'null'} ` +
+              `fy=${fy} val=${entryVal} end=${entry.end} filed=${entry.filed} start=${entry.start ?? 'none'}`);
+          }
+
+          // ── 4. Deduplication: largest val wins; latest filed breaks ties ─
+          const cur = tagMap[fy];
+          const betterVal  = !cur || entryVal > cur.val;
+          const sameVal    = cur  && entryVal === cur.val;
+          const betterFile = sameVal && filed > (cur.filed || '');
+          if (betterVal || betterFile) {
+            tagMap[fy] = { val: entryVal, filed, end: entry.end || null, fp: entry.fp || null };
           }
         }
       }
     }
 
-    // Debug log for revenue tags so we can verify annual values in Vercel logs
+    // Summary log after each Revenue tag
     if (isRevTag && dbgTotal > 0) {
       const summary = Object.entries(tagMap)
         .sort((a, b) => Number(b[0]) - Number(a[0]))
         .slice(0, 3)
         .map(([fy, i]) => `FY${fy}=$${(i.val / 1e9).toFixed(3)}B(fp=${i.fp ?? 'instant'})`)
         .join(', ');
-      console.log(`[EDGAR] tag=${tag} raw=${dbgTotal} after_form=${dbgFormPass} after_fp=${dbgFpPass} selected: ${summary || 'none'}`);
+      console.log(`[EDGAR] tag=${tag} raw=${dbgTotal} form=${dbgFormPass} fp=${dbgFpPass} WINNER: ${summary || 'none'}`);
     }
 
     // Fill years not yet covered by a higher-priority tag
@@ -437,8 +444,8 @@ module.exports = async function handler(req, res) {
   }
   if (!ticker) return res.status(400).json({ ok: false, error: 'ticker required' });
 
-  // ── Cache check — v4_ busts entries that may contain wrong EDGAR quarterly data ──
-  const cacheKey = 'v4_' + ticker;
+  // ── Cache check — v5_ busts entries with wrong dedup results ─────────────────
+  const cacheKey = 'v5_' + ticker;
   const cached   = _finCache.get(cacheKey);
   if (cached && (Date.now() - cached.time < FIN_TTL)) {
     return res.status(200).json({ ok: true, cached: true, ...cached.data });
