@@ -3,7 +3,7 @@
 // Primary: SEC EDGAR companyfacts (no key required)
 // Fallback: FMP income/balance/cashflow endpoints (requires FMP_API_KEY)
 // Supports GET ?ticker=AAPL and POST { ticker: "AAPL" }.
-// Cache keys use "v3_" prefix to bust any stale pre-deploy entries.
+// Cache keys use "v4_" prefix to bust stale entries with wrong EDGAR quarterly data.
 
 const TICKER_INDEX_URL = 'https://www.sec.gov/files/company_tickers.json';
 const EDGAR_FACTS_URL  = (cik) => `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`;
@@ -16,7 +16,7 @@ const ANNUAL_FORMS = new Set(['10-K', '10-K/A', '20-F', '20-F/A', '40-F', '40-F/
 // ── In-memory caches ──────────────────────────────────────────────────────────
 let   _tickerIndex = null;         // { data: normalizedTicker→{cik,name}, time }
 const _factsCache  = new Map();    // paddedCik → { data, time }
-const _finCache    = new Map();    // 'v3_'+ticker → { data, time }
+const _finCache    = new Map();    // 'v4_'+ticker → { data, time }
 
 const TICKER_TTL = 24 * 60 * 60 * 1000;
 const FACTS_TTL  = 7  * 24 * 60 * 60 * 1000;
@@ -94,16 +94,35 @@ async function _getCompanyFacts(paddedCik) {
 //
 // Returns: fy (number) → { val (number), end (string|null) }
 // Priority: first tag in the array that has data for a given fiscal year wins.
-// Within a tag, latest `filed` date wins (handles amendments).
-// Duration facts: skips entries where fp exists but ≠ 'FY'.
-// Instant facts (BS): fp absent → passes through.
+// Within a tag, latest `filed` date wins (handles amendments); ties broken by
+// latest `end` date (prefers longer period).
+//
+// Period filter (THE CRITICAL RULE):
+//   Duration facts have a `start` field. For these we REQUIRE fp === 'FY'
+//   explicitly — any other fp (Q1/Q2/Q3/Q4/null/undefined) is rejected.
+//   Instant facts (balance-sheet point-in-time values) have NO `start` field;
+//   they never carry an fp and are accepted from any ANNUAL_FORMS filing.
+//
+// BUG THAT WAS HERE: `if (entry.fp && entry.fp !== 'FY') continue` — the
+// `entry.fp &&` guard caused null/undefined fp to pass through even for
+// duration facts, allowing quarterly amounts filed inside a 10-K to survive.
+
+const _REV_TAGS = new Set([
+  'Revenues',
+  'RevenueFromContractWithCustomerExcludingAssessedTax',
+  'RevenueFromContractWithCustomerIncludingAssessedTax',
+  'SalesRevenueNet',
+  'SalesRevenueGoodsNet',
+]);
 
 function _extractByTags(facts, tags, opts = {}) {
   const { isEps = false, isShares = false } = opts;
   const yearMap = {};
 
   for (const tag of tags) {
-    const tagMap = {};
+    const tagMap = {}; // fy → { val, filed, end, fp }
+    const isRevTag = _REV_TAGS.has(tag);
+    let dbgTotal = 0, dbgFormPass = 0, dbgFpPass = 0;
 
     for (const taxonomy of ['us-gaap', 'dei']) {
       const tagData = facts.facts?.[taxonomy]?.[tag];
@@ -115,23 +134,48 @@ function _extractByTags(facts, tags, opts = {}) {
         if (!isEps && !isShares && unit !== 'USD') continue;
 
         for (const entry of entries) {
-          if (!ANNUAL_FORMS.has(entry.form)) continue;
-          if (entry.fp && entry.fp !== 'FY') continue;
+          if (isRevTag) dbgTotal++;
 
+          // ── 1. Form filter: annual filings only ──────────────────────────
+          if (!ANNUAL_FORMS.has(entry.form)) continue;
+          if (isRevTag) dbgFormPass++;
+
+          // ── 2. Period filter ─────────────────────────────────────────────
+          // Duration fact: `start` is present → must be explicitly FY.
+          // Instant fact:  `start` absent     → no fp to check, allow through.
+          if (entry.start != null && entry.fp !== 'FY') continue;
+          if (isRevTag) dbgFpPass++;
+
+          // ── 3. Fiscal year derivation ────────────────────────────────────
           const fy = entry.fy != null
             ? Number(entry.fy)
             : parseInt(entry.end?.slice(0, 4), 10);
           if (!fy || isNaN(fy)) continue;
 
+          // ── 4. Deduplication: latest filed wins; end-date breaks ties ────
           const filed = entry.filed || entry.end || '';
           const cur   = tagMap[fy];
-          if (!cur || filed > cur.filed) {
-            tagMap[fy] = { val: Number(entry.val), filed, end: entry.end || null };
+          const betterFiled = !cur || filed > cur.filed;
+          const sameFiled   = cur  && filed === cur.filed;
+          const betterEnd   = sameFiled && (entry.end || '') > (cur.end || '');
+          if (betterFiled || betterEnd) {
+            tagMap[fy] = { val: Number(entry.val), filed, end: entry.end || null, fp: entry.fp || null };
           }
         }
       }
     }
 
+    // Debug log for revenue tags so we can verify annual values in Vercel logs
+    if (isRevTag && dbgTotal > 0) {
+      const summary = Object.entries(tagMap)
+        .sort((a, b) => Number(b[0]) - Number(a[0]))
+        .slice(0, 3)
+        .map(([fy, i]) => `FY${fy}=$${(i.val / 1e9).toFixed(3)}B(fp=${i.fp ?? 'instant'})`)
+        .join(', ');
+      console.log(`[EDGAR] tag=${tag} raw=${dbgTotal} after_form=${dbgFormPass} after_fp=${dbgFpPass} selected: ${summary || 'none'}`);
+    }
+
+    // Fill years not yet covered by a higher-priority tag
     for (const [fyStr, info] of Object.entries(tagMap)) {
       const fy = Number(fyStr);
       if (yearMap[fy] == null) yearMap[fy] = { val: info.val, end: info.end };
@@ -393,8 +437,8 @@ module.exports = async function handler(req, res) {
   }
   if (!ticker) return res.status(400).json({ ok: false, error: 'ticker required' });
 
-  // ── Cache check — v3_ prefix busts any stale pre-deploy entries ───────────
-  const cacheKey = 'v3_' + ticker;
+  // ── Cache check — v4_ busts entries that may contain wrong EDGAR quarterly data ──
+  const cacheKey = 'v4_' + ticker;
   const cached   = _finCache.get(cacheKey);
   if (cached && (Date.now() - cached.time < FIN_TTL)) {
     return res.status(200).json({ ok: true, cached: true, ...cached.data });
