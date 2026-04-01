@@ -1,0 +1,22 @@
+{
+  "positions": [
+    {
+      "ticker": "AAPL",
+      "company": "AAPL",
+      "shares": 10,
+      "costBasis": 253.6,
+      "addedDate": "2026-03-27"
+    }
+  ],
+  "watchlist": [
+    "SPY",
+    "QQQ",
+    "BLK",
+    "GS",
+    "BX",
+    "APO",
+    "KKR",
+    "ARES"
+  ],
+  "alertThreshold": 0.2
+}
