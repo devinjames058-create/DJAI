@@ -1,35 +1,255 @@
 'use strict';
-// ── Financials API — SEC EDGAR companyfacts (sector-aware) with FMP fallback ──
-// Primary:  SEC EDGAR companyfacts (no key required), SIC-based sector routing
+// Financials API — SEC EDGAR annual extraction with filing-aware selection and FMP fallback.
+// Primary: SEC EDGAR companyfacts + submissions
 // Fallback: FMP income/balance/cashflow endpoints (requires FMP_API_KEY)
-// Cache keys use "v6_" prefix to bust all stale v5_ entries.
 
 const TICKER_INDEX_URL = 'https://www.sec.gov/files/company_tickers.json';
-const EDGAR_FACTS_URL  = (cik) => `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`;
-const EDGAR_SUBS_URL   = (cik) => `https://data.sec.gov/submissions/CIK${cik}.json`;
-const FMP_BASE         = 'https://financialmodelingprep.com/api/v3';
-const UA               = 'DJAI Finance dev@djai.app';
-const TIMEOUT          = 15000;
+const EDGAR_FACTS_URL = (cik) => `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`;
+const EDGAR_SUBS_URL = (cik) => `https://data.sec.gov/submissions/CIK${cik}.json`;
+const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+const UA = 'DJAI Finance dev@djai.app';
+const TIMEOUT = 15000;
+const DAY_MS = 86400000;
 
 const ANNUAL_FORMS = new Set(['10-K', '10-K/A', '20-F', '20-F/A', '40-F', '40-F/A']);
 
-// Non-amended forms are preferred over amendments when filed dates are equal
 function _formPriority(form) {
   return (form === '10-K' || form === '20-F' || form === '40-F') ? 1 : 0;
 }
 
-// ── In-memory caches ──────────────────────────────────────────────────────────
-const _tickerIndex      = { data: null, time: 0 }; // SEC ticker index, 24h TTL
-const _submissionsCache = new Map();                // paddedCik -> { data, time }, 24h TTL
-const _factsCache       = new Map();                // paddedCik -> { data, time }, 7d TTL
-const _finCache         = new Map();                // 'v6_'+ticker -> { data, time }, 24h TTL
+const _tickerIndex = { data: null, time: 0 };
+const _submissionsCache = new Map();
+const _factsCache = new Map();
+const _finCache = new Map();
 
 const TICKER_TTL = 24 * 60 * 60 * 1000;
-const SUBS_TTL   = 24 * 60 * 60 * 1000;
-const FACTS_TTL  = 7  * 24 * 60 * 60 * 1000;
-const FIN_TTL    = 24 * 60 * 60 * 1000;
+const SUBS_TTL = 24 * 60 * 60 * 1000;
+const FACTS_TTL = 7 * 24 * 60 * 60 * 1000;
+const FIN_TTL = 24 * 60 * 60 * 1000;
 
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
+const FIELD_DEFS = {
+  incomeStatement: {
+    revenue: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tagsBySector: {
+        general: ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'SalesRevenueNet', 'SalesRevenueGoodsNet'],
+        financial: ['Revenues', 'InterestAndDividendIncomeOperating', 'InterestIncomeExpenseNet', 'NoninterestIncome', 'RevenueFromContractWithCustomerExcludingAssessedTax'],
+        energy: ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet', 'ElectricUtilityRevenue', 'OilAndGasRevenue', 'RegulatedAndUnregulatedOperatingRevenue'],
+        healthcare: ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'SalesRevenueNet', 'SalesRevenueGoodsNet'],
+        reit: ['Revenues', 'RealEstateRevenueNet', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'RealEstateRevenue'],
+      },
+    },
+    costOfRevenue: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tagsBySector: {
+        general: ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold', 'CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization'],
+        financial: ['InterestExpense', 'InterestExpenseDeposits'],
+        energy: ['CostOfGoodsAndServicesSold', 'CostOfRevenue', 'CostOfGoodsSold', 'FuelCosts', 'CostOfNaturalGasPurchased'],
+        healthcare: ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold', 'CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization'],
+        reit: ['CostOfRevenue', 'RealEstateTaxExpense', 'CostOfGoodsAndServicesSold'],
+      },
+    },
+    grossProfit: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tagsBySector: {
+        general: ['GrossProfit'],
+        financial: [],
+        energy: ['GrossProfit'],
+        healthcare: ['GrossProfit'],
+        reit: [],
+      },
+    },
+    researchAndDevelopmentExpenses: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tagsBySector: {
+        general: ['ResearchAndDevelopmentExpense'],
+        financial: [],
+        energy: ['ResearchAndDevelopmentExpense'],
+        healthcare: ['ResearchAndDevelopmentExpense'],
+        reit: [],
+      },
+    },
+    sellingGeneralAndAdministrativeExpenses: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tagsBySector: {
+        general: ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense'],
+        financial: ['NoninterestExpense', 'SellingGeneralAndAdministrativeExpense'],
+        energy: ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense'],
+        healthcare: ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense'],
+        reit: ['GeneralAndAdministrativeExpense', 'SellingGeneralAndAdministrativeExpense'],
+      },
+    },
+    operatingIncome: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tagsBySector: {
+        general: ['OperatingIncomeLoss'],
+        financial: ['OperatingIncomeLoss', 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest'],
+        energy: ['OperatingIncomeLoss'],
+        healthcare: ['OperatingIncomeLoss'],
+        reit: ['OperatingIncomeLoss'],
+      },
+    },
+    interestExpense: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tagsBySector: {
+        general: ['InterestExpense', 'InterestExpenseDebt'],
+        financial: ['InterestExpense', 'InterestExpenseDeposits', 'InterestExpenseBorrowings'],
+        energy: ['InterestExpense', 'InterestExpenseDebt', 'InterestCostsIncurred'],
+        healthcare: ['InterestExpense', 'InterestExpenseDebt'],
+        reit: ['InterestExpense', 'InterestExpenseDebt'],
+      },
+    },
+    netIncome: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tagsBySector: {
+        general: ['NetIncomeLoss', 'ProfitLoss'],
+        financial: ['NetIncomeLoss', 'ProfitLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
+        energy: ['NetIncomeLoss', 'ProfitLoss'],
+        healthcare: ['NetIncomeLoss', 'ProfitLoss'],
+        reit: ['NetIncomeLoss', 'ProfitLoss'],
+      },
+    },
+    epsDiluted: {
+      mode: 'duration',
+      sourceType: 'per_share',
+      unit: 'eps',
+      tagsBySector: {
+        general: ['EarningsPerShareDiluted', 'IncomeLossFromContinuingOperationsPerDilutedShare', 'DilutedEarningsPerShare', 'NetIncomeLossAvailableToCommonStockholdersBasicAndDilutedPerShare', 'EarningsPerShareBasic', 'IncomeLossFromContinuingOperationsPerBasicShare', 'EarningsPerShareBasicAndDiluted'],
+        financial: ['EarningsPerShareDiluted', 'IncomeLossFromContinuingOperationsPerDilutedShare', 'DilutedEarningsPerShare', 'NetIncomeLossAvailableToCommonStockholdersBasicAndDilutedPerShare', 'EarningsPerShareBasic', 'IncomeLossFromContinuingOperationsPerBasicShare', 'EarningsPerShareBasicAndDiluted'],
+        energy: ['EarningsPerShareDiluted', 'IncomeLossFromContinuingOperationsPerDilutedShare', 'DilutedEarningsPerShare', 'NetIncomeLossAvailableToCommonStockholdersBasicAndDilutedPerShare', 'EarningsPerShareBasic', 'IncomeLossFromContinuingOperationsPerBasicShare', 'EarningsPerShareBasicAndDiluted'],
+        healthcare: ['EarningsPerShareDiluted', 'IncomeLossFromContinuingOperationsPerDilutedShare', 'DilutedEarningsPerShare', 'NetIncomeLossAvailableToCommonStockholdersBasicAndDilutedPerShare', 'EarningsPerShareBasic', 'IncomeLossFromContinuingOperationsPerBasicShare', 'EarningsPerShareBasicAndDiluted'],
+        reit: ['EarningsPerShareDiluted', 'IncomeLossFromContinuingOperationsPerDilutedShare', 'DilutedEarningsPerShare', 'NetIncomeLossAvailableToCommonStockholdersBasicAndDilutedPerShare', 'EarningsPerShareBasic', 'IncomeLossFromContinuingOperationsPerBasicShare', 'EarningsPerShareBasicAndDiluted'],
+      },
+    },
+    weightedAverageShsOutDil: {
+      mode: 'duration',
+      sourceType: 'share_count',
+      unit: 'shares',
+      tagsBySector: {
+        general: ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted', 'WeightedAverageNumberOfDilutedShares', 'WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfSharesIssuedBasic'],
+        financial: ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted', 'WeightedAverageNumberOfDilutedShares', 'WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfSharesIssuedBasic'],
+        energy: ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted', 'WeightedAverageNumberOfDilutedShares', 'WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfSharesIssuedBasic'],
+        healthcare: ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted', 'WeightedAverageNumberOfDilutedShares', 'WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfSharesIssuedBasic'],
+        reit: ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted', 'WeightedAverageNumberOfDilutedShares', 'WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfSharesIssuedBasic'],
+      },
+    },
+  },
+  balanceSheet: {
+    cashAndCashEquivalents: {
+      mode: 'instant',
+      sourceType: 'canonical',
+      tags: [
+        'CashAndCashEquivalentsAtCarryingValue',
+        'CashCashEquivalentsAndShortTermInvestments',
+        'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents',
+        'RestrictedCashAndCashEquivalents',
+        'CashAndDueFromBanks',
+        'InterestBearingDepositsInBanks',
+        'FederalFundsSoldAndSecuritiesPurchasedUnderAgreementsToResell',
+        'CashDueFromBanksAndInterestBearingDepositsInBanks',
+        'Cash',
+      ],
+    },
+    totalCurrentAssets: { mode: 'instant', sourceType: 'canonical', tags: ['AssetsCurrent'] },
+    totalAssets: { mode: 'instant', sourceType: 'canonical', tags: ['Assets'] },
+    totalCurrentLiabilities: { mode: 'instant', sourceType: 'canonical', tags: ['LiabilitiesCurrent'] },
+    longTermDebt: {
+      mode: 'instant',
+      sourceType: 'canonical',
+      tags: [
+        'LongTermDebtNoncurrent',
+        'LongTermDebt',
+        'DebtAndCapitalLeaseObligations',
+        'LongTermBorrowings',
+        'LongTermFHLBAdvances',
+        'UnsecuredLongTermDebt',
+        'NotesAndLoansPayableNoncurrent',
+        'OtherBorrowingsNoncurrent',
+        'LongTermDebtAndCapitalLeaseObligations',
+        'LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities',
+        'OtherBorrowings',
+        'NotesPayable',
+      ],
+    },
+    totalLiabilities: {
+      mode: 'instant',
+      sourceType: 'canonical',
+      tags: ['Liabilities', 'TotalLiabilities', 'LiabilitiesFairValueDisclosure', 'LiabilitiesAndStockholdersEquityLessAssets'],
+    },
+    totalStockholdersEquity: {
+      mode: 'instant',
+      sourceType: 'canonical',
+      tags: ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'],
+    },
+    bookValuePerShareDirect: {
+      mode: 'instant',
+      sourceType: 'per_share',
+      unit: 'eps',
+      tags: ['BookValuePerShare', 'CommonStockEquityPerShare'],
+    },
+  },
+  cashFlow: {
+    operatingCashFlow: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tags: ['NetCashProvidedByUsedInOperatingActivities', 'NetCashProvidedByOperatingActivities'],
+    },
+    capitalExpenditure: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tags: [
+        'PaymentsToAcquirePropertyPlantAndEquipment',
+        'CapitalExpendituresIncurredButNotYetPaid',
+        'PropertyPlantAndEquipmentAdditions',
+        'PaymentsToAcquireProductiveAssets',
+        'PurchaseOfPropertyAndEquipmentAndIntangibleAssets',
+        'AdditionsToPropertyPlantAndEquipment',
+        'PaymentsToAcquireOtherPropertyPlantAndEquipment',
+        'PaymentsToAcquireCommercialRealEstate',
+        'PaymentsToAcquireAndDevelopRealEstate',
+        'RealEstateOtherAdditions',
+        'DirectCostsOfLeasedAndRentedPropertyOrEquipment',
+      ],
+    },
+    dividendsPaid: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tags: ['PaymentsOfDividends', 'PaymentsOfDividendsCommonStock'],
+    },
+    commonStockRepurchased: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tags: ['PaymentsForRepurchaseOfCommonStock'],
+    },
+    acquisitionsNet: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tags: ['PaymentsToAcquireBusinessesNetOfCashAcquired', 'PaymentsToAcquireBusinessesGross', 'PaymentsToAcquireBusiness'],
+    },
+    netCashProvidedByUsedInInvestingActivities: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tags: ['NetCashProvidedByUsedInInvestingActivities'],
+    },
+    netCashUsedProvidedByFinancingActivities: {
+      mode: 'duration',
+      sourceType: 'canonical',
+      tags: ['NetCashProvidedByUsedInFinancingActivities', 'NetCashUsedProvidedByFinancingActivities'],
+    },
+  },
+};
+
+const SHARES_OUTSTANDING_FALLBACK_TAGS = ['CommonStockSharesOutstanding', 'EntityCommonStockSharesOutstanding'];
+
+const _TAXONOMIES = ['us-gaap', 'ifrs-full', 'dei'];
 
 async function _edgarFetch(url, signal) {
   const res = await fetch(url, {
@@ -51,21 +271,59 @@ async function _fmpFetch(path, key, signal) {
   return res.json();
 }
 
-// ── CIK resolution ────────────────────────────────────────────────────────────
+function _normalizeTicker(ticker) {
+  return String(ticker || '').trim().toUpperCase().replace(/[.\-]/g, '');
+}
+
+function _normalizeAccession(accn) {
+  return String(accn || '').replace(/-/g, '').trim();
+}
+
+function _safeDateValue(value) {
+  const ts = Date.parse(value || '');
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function _diffDays(a, b) {
+  const ta = _safeDateValue(a);
+  const tb = _safeDateValue(b);
+  if (ta == null || tb == null) return null;
+  return Math.abs(ta - tb) / DAY_MS;
+}
+
+function _durationDays(entry) {
+  const start = _safeDateValue(entry.start);
+  const end = _safeDateValue(entry.end);
+  if (start == null || end == null || end < start) return null;
+  return (end - start) / DAY_MS;
+}
+
+function _noNumber(value) {
+  return value == null || !Number.isFinite(Number(value));
+}
+
+function _sanitizeNumber(value) {
+  if (_noNumber(value)) return null;
+  return Number(value);
+}
+
+function _pushWarning(warnings, message) {
+  if (!message) return;
+  if (!warnings.includes(message)) warnings.push(message);
+}
 
 async function _resolveCIK(ticker) {
   const now = Date.now();
   if (!_tickerIndex.data || (now - _tickerIndex.time > TICKER_TTL)) {
-    const ctrl  = new AbortController();
+    const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
     try {
       const raw = await _edgarFetch(TICKER_INDEX_URL, ctrl.signal);
       clearTimeout(timer);
       const lookup = {};
       for (const entry of Object.values(raw)) {
-        const key = String(entry.ticker).toUpperCase().replace(/[.\-]/g, '');
-        lookup[key] = {
-          cik:  String(entry.cik_str || entry.cik).padStart(10, '0'),
+        lookup[_normalizeTicker(entry.ticker)] = {
+          cik: String(entry.cik_str || entry.cik).padStart(10, '0'),
           name: entry.title || entry.ticker,
         };
       }
@@ -76,487 +334,511 @@ async function _resolveCIK(ticker) {
       if (!_tickerIndex.data) throw e;
     }
   }
-  const normalized = ticker.toUpperCase().replace(/[.\-]/g, '');
-  return _tickerIndex.data[normalized] || null;
+  return _tickerIndex.data[_normalizeTicker(ticker)] || null;
 }
 
-// ── SIC-based sector detection ────────────────────────────────────────────────
-
-async function _detectSector(paddedCik) {
-  const now    = Date.now();
+async function _getSubmissions(paddedCik) {
+  const now = Date.now();
   const cached = _submissionsCache.get(paddedCik);
-  let   sic    = null;
+  if (cached && (now - cached.time < SUBS_TTL)) return cached.data;
 
-  if (cached && (now - cached.time < SUBS_TTL)) {
-    sic = (cached.data && cached.data.sic != null) ? cached.data.sic : null;
-  } else {
-    const ctrl  = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
-    try {
-      const subs = await _edgarFetch(EDGAR_SUBS_URL(paddedCik), ctrl.signal);
-      clearTimeout(timer);
-      _submissionsCache.set(paddedCik, { data: subs, time: now });
-      sic = (subs && subs.sic != null) ? subs.sic : null;
-    } catch (_) {
-      clearTimeout(timer);
-      // Non-fatal — default to 'general'
-    }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
+  try {
+    const subs = await _edgarFetch(EDGAR_SUBS_URL(paddedCik), ctrl.signal);
+    clearTimeout(timer);
+    _submissionsCache.set(paddedCik, { data: subs, time: now });
+    return subs;
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
   }
+}
 
-  if (sic == null) return 'general';
-  const n = Number(sic);
-  if (n >= 6500 && n <= 6599) return 'reit';
-  if (n >= 6000 && n <= 6999) return 'financial';
-  if ((n >= 1000 && n <= 1499) || (n >= 2900 && n <= 2999) || (n >= 4900 && n <= 4999)) return 'energy';
-  if ((n >= 2830 && n <= 2836) || (n >= 3841 && n <= 3851) || n === 5912 || (n >= 8000 && n <= 8099)) return 'healthcare';
+function _detectSectorFromSubmissions(subs) {
+  const sic = subs && subs.sic != null ? Number(subs.sic) : null;
+  if (!Number.isFinite(sic)) return 'general';
+  if (sic >= 6500 && sic <= 6599) return 'reit';
+  if (sic >= 6000 && sic <= 6999) return 'financial';
+  if ((sic >= 1000 && sic <= 1499) || (sic >= 2900 && sic <= 2999) || (sic >= 4900 && sic <= 4999)) return 'energy';
+  if ((sic >= 2830 && sic <= 2836) || (sic >= 3841 && sic <= 3851) || sic === 5912 || (sic >= 8000 && sic <= 8099)) return 'healthcare';
   return 'general';
 }
 
-// ── Sector tag maps ───────────────────────────────────────────────────────────
+function _buildAnnualFilings(subs) {
+  const recent = subs && subs.filings && subs.filings.recent ? subs.filings.recent : {};
+  const forms = recent.form || [];
+  const accessions = recent.accessionNumber || [];
+  const filingDates = recent.filingDate || [];
+  const reportDates = recent.reportDate || [];
+  const byFY = new Map();
+  const byAccession = new Map();
 
-const SECTOR_TAGS = {
-  general: {
-    is: {
-      revenue:         ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'SalesRevenueNet', 'SalesRevenueGoodsNet'],
-      costOfRevenue:   ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold', 'CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization'],
-      grossProfit:     ['GrossProfit'],
-      rnd:             ['ResearchAndDevelopmentExpense'],
-      sga:             ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense'],
-      operatingIncome: ['OperatingIncomeLoss'],
-      interestExpense: ['InterestExpense', 'InterestExpenseDebt'],
-      netIncome:       ['NetIncomeLoss', 'ProfitLoss'],
-      eps:             ['EarningsPerShareDiluted'],
-      shares:          ['WeightedAverageNumberOfDilutedSharesOutstanding', 'CommonStockSharesOutstanding'],
-    },
-  },
-  financial: {
-    is: {
-      revenue:         ['Revenues', 'InterestAndDividendIncomeOperating', 'InterestIncomeExpenseNet', 'NoninterestIncome', 'RevenueFromContractWithCustomerExcludingAssessedTax'],
-      costOfRevenue:   ['InterestExpense', 'InterestExpenseDeposits'],
-      grossProfit:     [],
-      rnd:             [],
-      sga:             ['NoninterestExpense', 'SellingGeneralAndAdministrativeExpense'],
-      operatingIncome: ['OperatingIncomeLoss', 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest'],
-      interestExpense: ['InterestExpense', 'InterestExpenseDeposits', 'InterestExpenseBorrowings'],
-      netIncome:       ['NetIncomeLoss', 'ProfitLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
-      eps:             ['EarningsPerShareDiluted'],
-      shares:          ['WeightedAverageNumberOfDilutedSharesOutstanding'],
-    },
-  },
-  energy: {
-    is: {
-      revenue:         ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet', 'ElectricUtilityRevenue', 'OilAndGasRevenue', 'RegulatedAndUnregulatedOperatingRevenue'],
-      costOfRevenue:   ['CostOfGoodsAndServicesSold', 'CostOfRevenue', 'CostOfGoodsSold', 'FuelCosts', 'CostOfNaturalGasPurchased'],
-      grossProfit:     ['GrossProfit'],
-      rnd:             ['ResearchAndDevelopmentExpense'],
-      sga:             ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense'],
-      operatingIncome: ['OperatingIncomeLoss'],
-      interestExpense: ['InterestExpense', 'InterestExpenseDebt', 'InterestCostsIncurred'],
-      netIncome:       ['NetIncomeLoss', 'ProfitLoss'],
-      eps:             ['EarningsPerShareDiluted'],
-      shares:          ['WeightedAverageNumberOfDilutedSharesOutstanding'],
-    },
-  },
-  healthcare: {
-    // Same structure as general — healthcare companies have standard P&L
-    is: {
-      revenue:         ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'SalesRevenueNet', 'SalesRevenueGoodsNet'],
-      costOfRevenue:   ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold', 'CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization'],
-      grossProfit:     ['GrossProfit'],
-      rnd:             ['ResearchAndDevelopmentExpense'],
-      sga:             ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense'],
-      operatingIncome: ['OperatingIncomeLoss'],
-      interestExpense: ['InterestExpense', 'InterestExpenseDebt'],
-      netIncome:       ['NetIncomeLoss', 'ProfitLoss'],
-      eps:             ['EarningsPerShareDiluted'],
-      shares:          ['WeightedAverageNumberOfDilutedSharesOutstanding', 'CommonStockSharesOutstanding'],
-    },
-  },
-  reit: {
-    is: {
-      revenue:         ['Revenues', 'RealEstateRevenueNet', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'RealEstateRevenue'],
-      costOfRevenue:   ['CostOfRevenue', 'RealEstateTaxExpense', 'CostOfGoodsAndServicesSold'],
-      grossProfit:     ['GrossProfit'],
-      rnd:             [],
-      sga:             ['GeneralAndAdministrativeExpense', 'SellingGeneralAndAdministrativeExpense'],
-      operatingIncome: ['OperatingIncomeLoss'],
-      interestExpense: ['InterestExpense', 'InterestExpenseDebt'],
-      netIncome:       ['NetIncomeLoss', 'ProfitLoss'],
-      eps:             ['EarningsPerShareDiluted'],
-      shares:          ['WeightedAverageNumberOfDilutedSharesOutstanding'],
-    },
-  },
-};
+  for (let i = 0; i < forms.length; i++) {
+    const form = forms[i];
+    if (!ANNUAL_FORMS.has(form)) continue;
+    const reportDate = reportDates[i] || null;
+    const filedDate = filingDates[i] || null;
+    const fy = parseInt(String(reportDate || filedDate || '').slice(0, 4), 10);
+    if (!fy || Number.isNaN(fy)) continue;
+    const filing = {
+      form,
+      accession: _normalizeAccession(accessions[i]),
+      filedDate,
+      reportDate,
+      fiscalYear: fy,
+      formPriority: _formPriority(form),
+    };
+    const cur = byFY.get(fy);
+    if (!cur
+        || (_safeDateValue(filing.filedDate) || 0) > (_safeDateValue(cur.filedDate) || 0)
+        || (((_safeDateValue(filing.filedDate) || 0) === (_safeDateValue(cur.filedDate) || 0)) && filing.formPriority > cur.formPriority)) {
+      byFY.set(fy, filing);
+    }
+    if (filing.accession) byAccession.set(filing.accession, filing);
+  }
 
-// Universal BS and CF tags (same for all sectors)
-const BS_TAGS = {
-  cash:      ['CashAndCashEquivalentsAtCarryingValue', 'CashCashEquivalentsAndShortTermInvestments', 'Cash'],
-  curAssets: ['AssetsCurrent'],
-  totAssets: ['Assets'],
-  curLiab:   ['LiabilitiesCurrent'],
-  ltDebt:    ['LongTermDebt', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations', 'LongTermBorrowings'],
-  totLiab:   ['Liabilities'],
-  equity:    ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'],
-  sharesOS:  ['EntityCommonStockSharesOutstanding', 'CommonStockSharesOutstanding'],
-};
+  return { byFY, byAccession };
+}
 
-const CF_TAGS = {
-  opCF:         ['NetCashProvidedByUsedInOperatingActivities', 'NetCashProvidedByOperatingActivities'],
-  capex:        ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets'],
-  dividends:    ['PaymentsOfDividends', 'PaymentsOfDividendsCommonStock'],
-  buybacks:     ['PaymentsForRepurchaseOfCommonStock'],
-  acquisitions: ['PaymentsToAcquireBusinessesNetOfCashAcquired', 'PaymentsToAcquireBusinessesGross'],
-  investCF:     ['NetCashProvidedByUsedInInvestingActivities'],
-  finCF:        ['NetCashProvidedByUsedInFinancingActivities', 'NetCashUsedProvidedByFinancingActivities'],
-};
+function _getTags(def, sector) {
+  if (!def) return [];
+  if (def.tags) return def.tags;
+  const tagsBySector = def.tagsBySector || {};
+  return tagsBySector[sector] || tagsBySector.general || [];
+}
 
-// Revenue tag set for verbose debug logging
-const _REV_TAGS = new Set([
-  'Revenues',
-  'RevenueFromContractWithCustomerExcludingAssessedTax',
-  'RevenueFromContractWithCustomerIncludingAssessedTax',
-  'SalesRevenueNet',
-  'SalesRevenueGoodsNet',
-  'ElectricUtilityRevenue',
-  'OilAndGasRevenue',
-  'RegulatedAndUnregulatedOperatingRevenue',
-  'RealEstateRevenueNet',
-  'RealEstateRevenue',
-  'InterestAndDividendIncomeOperating',
-  'InterestIncomeExpenseNet',
-  'NoninterestIncome',
-]);
+function _normalizeUnit(unit) {
+  return String(unit || '').toLowerCase().replace(/\s+/g, '');
+}
 
-// ── Duration fact extraction (IS and CF items) ────────────────────────────────
-// STRICT: fp must equal 'FY'. Null fp, Q4, Q1-Q3 all rejected.
+function _unitMatches(unit, def, isSharesOpt) {
+  const normalized = _normalizeUnit(unit);
+  if (def && def.unit === 'eps') return normalized === 'usd/shares' || normalized === 'usd/share';
+  if (def && def.unit === 'shares') return normalized === 'shares';
+  if (isSharesOpt) return normalized === 'shares';
+  return normalized === 'usd';
+}
 
-function _extractDuration(facts, tags, opts) {
-  const isEps    = opts ? !!opts.isEps    : false;
-  const isShares = opts ? !!opts.isShares : false;
-  const yearMap  = {};
+function _isAnnualFact(entry, mode) {
+  if (!ANNUAL_FORMS.has(entry.form)) return false;
+  if (mode === 'instant') {
+    return entry.fp == null || entry.fp === 'FY';
+  }
+  if (entry.fp === 'FY') return true;
+  if (entry.fp != null) return false;
+  const days = _durationDays(entry);
+  return days != null && days >= 330 && days <= 380;
+}
 
-  for (let ti = 0; ti < tags.length; ti++) {
-    const tag    = tags[ti];
-    const tagMap = {};
-    const isRevTag = _REV_TAGS.has(tag);
+function _deriveFiscalYear(entry) {
+  const fromEnd = parseInt(String(entry.end || '').slice(0, 4), 10);
+  if (Number.isFinite(fromEnd)) return fromEnd;
+  if (entry.fy != null && Number.isFinite(Number(entry.fy))) return Number(entry.fy);
+  return null;
+}
 
-    for (const taxonomy of ['us-gaap', 'dei']) {
-      if (!facts.facts || !facts.facts[taxonomy] || !facts.facts[taxonomy][tag]) continue;
-      const tagData = facts.facts[taxonomy][tag];
-      if (!tagData.units) continue;
+function _confidenceFor(candidate) {
+  if (candidate.exactAccession) return 'high';
+  if (candidate.usedShareFallback) return 'medium';
+  if (candidate.mode === 'duration' && candidate.entry.fp == null) return 'medium';
+  return 'high';
+}
 
-      const unitKeys = Object.keys(tagData.units);
-      for (let ui = 0; ui < unitKeys.length; ui++) {
-        const unit = unitKeys[ui];
-        if (isEps    && unit !== 'USD/shares') continue;
-        if (isShares && unit !== 'shares')     continue;
-        if (!isEps && !isShares && unit !== 'USD') continue;
+function _scoreCandidate(candidate, filing, tagIndex, taxonomyIndex) {
+  let score = 0;
+  if (candidate.exactAccession) score += 1000000;
+  if (candidate.sameFiscalYear) score += 200000;
+  if (filing && candidate.entry.form === filing.form) score += 20000;
 
+  const endDiff = filing ? _diffDays(candidate.entry.end, filing.reportDate) : null;
+  if (endDiff != null) score += Math.max(0, 10000 - Math.round(endDiff));
+
+  const filedDiff = filing ? _diffDays(candidate.entry.filed, filing.filedDate) : null;
+  if (filedDiff != null) score += Math.max(0, 5000 - Math.round(filedDiff));
+
+  score += _formPriority(candidate.entry.form) * 1000;
+  score += Math.max(0, 500 - (tagIndex * 10));
+  score += Math.max(0, 50 - taxonomyIndex);
+  score += (_safeDateValue(candidate.entry.filed) || 0) / 1e12;
+  return score;
+}
+
+function _makeMetadata(candidate, def, warning) {
+  const warnings = [];
+  if (warning) warnings.push(warning);
+  if (candidate.mode === 'duration' && candidate.entry.fp == null) {
+    warnings.push('Annual duration accepted from null fp based on period length');
+  }
+  if (candidate.usedShareFallback) {
+    warnings.push('Used common shares outstanding as diluted-share fallback');
+  }
+  return {
+    tagUsed: candidate.tag,
+    sourceType: def.sourceType || 'canonical',
+    form: candidate.entry.form || null,
+    accession: _normalizeAccession(candidate.entry.accn || candidate.entry.accNum || candidate.filingAccession),
+    filedDate: candidate.entry.filed || null,
+    fiscalYear: candidate.fy,
+    confidence: _confidenceFor(candidate),
+    warnings,
+  };
+}
+
+function _cloneMeta(meta, overrides) {
+  return Object.assign({}, meta || {}, overrides || {}, {
+    warnings: (meta && Array.isArray(meta.warnings) ? meta.warnings.slice() : []),
+  });
+}
+
+function _selectFieldMap(facts, filings, def, sector, opts) {
+  const tags = _getTags(def, sector);
+  const mode = def.mode;
+  const useSharesUnit = opts && opts.isShares;
+  const yearMap = {};
+  const metaMap = {};
+
+  for (let tagIndex = 0; tagIndex < tags.length; tagIndex++) {
+    const tag = tags[tagIndex];
+    for (let taxonomyIndex = 0; taxonomyIndex < _TAXONOMIES.length; taxonomyIndex++) {
+      const taxonomy = _TAXONOMIES[taxonomyIndex];
+      const tagData = facts && facts.facts && facts.facts[taxonomy] && facts.facts[taxonomy][tag];
+      if (!tagData || !tagData.units) continue;
+
+      for (const unit of Object.keys(tagData.units)) {
+        if (!_unitMatches(unit, def, useSharesUnit)) continue;
         const entries = tagData.units[unit];
-        for (let ei = 0; ei < entries.length; ei++) {
-          const entry = entries[ei];
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          if (!_isAnnualFact(entry, mode)) continue;
+          const fy = _deriveFiscalYear(entry);
+          if (!fy) continue;
+          const filing = filings.byFY.get(fy) || null;
+          const entryAccession = _normalizeAccession(entry.accn || entry.accNum);
+          const exactAccession = !!(filing && entryAccession && filing.accession && entryAccession === filing.accession);
+          const candidate = {
+            entry,
+            tag,
+            fy,
+            mode,
+            exactAccession,
+            sameFiscalYear: !!filing,
+            filingAccession: filing ? filing.accession : null,
+            usedShareFallback: tag === 'CommonStockSharesOutstanding' || tag === 'EntityCommonStockSharesOutstanding',
+          };
+          const score = _scoreCandidate(candidate, filing, tagIndex, taxonomyIndex);
+          const value = _sanitizeNumber(entry.val);
+          if (value == null) continue;
 
-          // 1. Annual form only
-          if (!ANNUAL_FORMS.has(entry.form)) continue;
-
-          // 2. Annual period filter for duration facts.
-          //    Accept fp='FY' explicitly.
-          //    Accept null/missing fp only when the period spans ~12 months —
-          //    some filers omit fp on duration facts in their 10-K XBRL context.
-          //    Reject everything else (Q1–Q4 or short/multi-year periods).
-          if (entry.fp === 'FY') {
-            // explicitly annual — accept
-          } else if (entry.fp == null && entry.start != null && entry.end != null) {
-            const days = (new Date(entry.end) - new Date(entry.start)) / 86400000;
-            if (days < 330 || days > 380) continue; // quarter or multi-year — reject
-          } else {
-            continue; // Q1–Q4 or unrecognised period
+          if (!yearMap[fy] || score > yearMap[fy].score) {
+            yearMap[fy] = {
+              value,
+              end: entry.end || null,
+              score,
+              candidate,
+            };
+            metaMap[fy] = _makeMetadata(candidate, def);
           }
-
-          // 3. Fiscal year derivation
-          const fy = entry.fy != null
-            ? Number(entry.fy)
-            : parseInt(entry.end ? entry.end.slice(0, 4) : '', 10);
-          if (!fy || isNaN(fy)) continue;
-
-          const val   = Number(entry.val);
-          const filed = entry.filed || entry.end || '';
-
-          if (isRevTag) {
-            console.log('[EDGAR rev] PASS tag=' + tag + ' form=' + entry.form + ' fp=' + entry.fp + ' fy=' + fy + ' val=' + val + ' end=' + entry.end + ' filed=' + entry.filed);
-          }
-
-          // 4. Dedup: latest filed wins; on tie prefer non-amended (10-K over 10-K/A)
-          const cur = tagMap[fy];
-          const pri = _formPriority(entry.form);
-          if (!cur
-              || filed > (cur.filed || '')
-              || (filed === (cur.filed || '') && pri > (cur.pri || 0))) {
-            tagMap[fy] = { val: val, filed: filed, end: entry.end || null, pri: pri };
-          }
-        }
-      }
-    }
-
-    if (isRevTag && Object.keys(tagMap).length > 0) {
-      const fyKeys = Object.keys(tagMap).sort(function(a, b) { return Number(b) - Number(a); }).slice(0, 3);
-      const summary = fyKeys.map(function(fy) { return 'FY' + fy + '=$' + (tagMap[fy].val / 1e9).toFixed(3) + 'B'; }).join(', ');
-      console.log('[EDGAR] tag=' + tag + ' WINNER: ' + summary);
-    }
-
-    // Priority: first tag with data for a given fy wins
-    const fyKeys = Object.keys(tagMap);
-    for (let ki = 0; ki < fyKeys.length; ki++) {
-      const fy   = Number(fyKeys[ki]);
-      const info = tagMap[fyKeys[ki]];
-      if (yearMap[fy] == null) {
-        yearMap[fy] = { val: info.val, end: info.end };
-        if (isRevTag) {
-          console.log('[EDGAR ' + tag + '] Revenue SELECTED FY' + fy + ': $' + (info.val / 1e9).toFixed(3) + 'B');
         }
       }
     }
   }
 
-  return yearMap;
+  return { values: yearMap, meta: metaMap };
 }
 
-// ── Instant fact extraction (BS items) ───────────────────────────────────────
-// Balance sheet facts are point-in-time. fp can be 'FY' or null/undefined
-// (SEC often omits fp for instant facts in annual filings).
-
-function _extractInstant(facts, tags, opts) {
-  const isShares = opts ? !!opts.isShares : false;
-  const yearMap  = {};
-
-  for (let ti = 0; ti < tags.length; ti++) {
-    const tag    = tags[ti];
-    const tagMap = {};
-
-    for (const taxonomy of ['us-gaap', 'dei']) {
-      if (!facts.facts || !facts.facts[taxonomy] || !facts.facts[taxonomy][tag]) continue;
-      const tagData = facts.facts[taxonomy][tag];
-      if (!tagData.units) continue;
-
-      const unitKeys = Object.keys(tagData.units);
-      for (let ui = 0; ui < unitKeys.length; ui++) {
-        const unit = unitKeys[ui];
-        if (isShares && unit !== 'shares') continue;
-        if (!isShares && unit !== 'USD')   continue;
-
-        const entries = tagData.units[unit];
-        for (let ei = 0; ei < entries.length; ei++) {
-          const entry = entries[ei];
-
-          // 1. Annual form only
-          if (!ANNUAL_FORMS.has(entry.form)) continue;
-
-          // 2. Instant facts: accept fp='FY' or fp=null/undefined
-          //    SEC often omits fp on balance-sheet point-in-time readings
-          if (entry.fp !== 'FY' && entry.fp != null) continue;
-
-          // 3. Fiscal year derivation
-          const fy = entry.fy != null
-            ? Number(entry.fy)
-            : parseInt(entry.end ? entry.end.slice(0, 4) : '', 10);
-          if (!fy || isNaN(fy)) continue;
-
-          const val   = Number(entry.val);
-          const filed = entry.filed || entry.end || '';
-
-          // 4. Latest filed wins; on tie prefer non-amended (10-K over 10-K/A)
-          const cur = tagMap[fy];
-          const pri = _formPriority(entry.form);
-          if (!cur
-              || filed > (cur.filed || '')
-              || (filed === (cur.filed || '') && pri > (cur.pri || 0))) {
-            tagMap[fy] = { val: val, filed: filed, end: entry.end || null, pri: pri };
-          }
-        }
-      }
-    }
-
-    // Priority: first tag with data for a given fy wins
-    const fyKeys = Object.keys(tagMap);
-    for (let ki = 0; ki < fyKeys.length; ki++) {
-      const fy   = Number(fyKeys[ki]);
-      const info = tagMap[fyKeys[ki]];
-      if (yearMap[fy] == null) {
-        yearMap[fy] = { val: info.val, end: info.end };
-      }
-    }
-  }
-
-  return yearMap;
+function _getFieldValue(fieldMap, fy) {
+  return fieldMap.values[fy] ? fieldMap.values[fy].value : null;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function _selectYears(maps) {
-  const fySet = new Set();
-  for (let mi = 0; mi < maps.length; mi++) {
-    const m = maps[mi];
-    const keys = Object.keys(m);
-    for (let ki = 0; ki < keys.length; ki++) fySet.add(Number(keys[ki]));
-  }
-  return Array.from(fySet).sort(function(a, b) { return b - a; }).slice(0, 5);
+function _getFieldEnd(fieldMap, fy) {
+  return fieldMap.values[fy] ? fieldMap.values[fy].end : null;
 }
 
-function _v(map, fy) {
-  const entry = map[fy];
-  if (entry == null) return null;
-  return (entry.val != null && isFinite(entry.val)) ? entry.val : null;
-}
-
-function _end(map, fy) {
-  return (map[fy] && map[fy].end) ? map[fy].end : null;
-}
-
-function _date(maps, fy) {
-  for (let mi = 0; mi < maps.length; mi++) {
-    const d = _end(maps[mi], fy);
-    if (d) return d;
+function _pickDate(fieldMaps, fy, filings) {
+  const filing = filings && filings.byFY ? filings.byFY.get(fy) : null;
+  if (filing && filing.reportDate) return filing.reportDate;
+  for (let i = 0; i < fieldMaps.length; i++) {
+    const end = _getFieldEnd(fieldMaps[i], fy);
+    if (end) return end;
   }
   return String(fy) + '-12-31';
 }
 
-// ── Statement builders ────────────────────────────────────────────────────────
-
-function _buildIS(facts, sector, years) {
-  const tags    = (SECTOR_TAGS[sector] || SECTOR_TAGS.general).is;
-  const revenue     = _extractDuration(facts, tags.revenue, {});
-  const costOfRev   = tags.costOfRevenue.length ? _extractDuration(facts, tags.costOfRevenue, {}) : {};
-  const grossProfit = tags.grossProfit.length   ? _extractDuration(facts, tags.grossProfit, {})   : {};
-  const rnd         = tags.rnd.length           ? _extractDuration(facts, tags.rnd, {})           : {};
-  const sga         = tags.sga.length           ? _extractDuration(facts, tags.sga, {})           : {};
-  const opIncome    = _extractDuration(facts, tags.operatingIncome, {});
-  const intExp      = _extractDuration(facts, tags.interestExpense, {});
-  const netIncome   = _extractDuration(facts, tags.netIncome, {});
-  const eps         = _extractDuration(facts, tags.eps, { isEps: true });
-  const dilShares   = _extractDuration(facts, tags.shares, { isShares: true });
-
-  return years.map(function(fy) {
-    const rev = _v(revenue, fy);
-    const cor = _v(costOfRev, fy);
-    let   gp  = _v(grossProfit, fy);
-    // Only synthesize gross profit for sectors that explicitly define grossProfit tags.
-    // Financial issuers map costOfRevenue to interest expense, so rev - cor would produce
-    // misleading net-interest-income rather than a meaningful gross profit line.
-    if (gp == null && rev != null && cor != null && tags.grossProfit.length > 0) gp = rev - cor;
-    return {
-      date:         _date([revenue, netIncome], fy),
-      calendarYear: String(fy),
-      revenue:      rev,
-      costOfRevenue: cor,
-      grossProfit:  (gp != null && isFinite(gp)) ? gp : null,
-      researchAndDevelopmentExpenses:          _v(rnd, fy),
-      sellingGeneralAndAdministrativeExpenses: _v(sga, fy),
-      operatingIncome: _v(opIncome, fy),
-      interestExpense: _v(intExp, fy),
-      netIncome:       _v(netIncome, fy),
-      epsDiluted:      _v(eps, fy),
-      weightedAverageShsOutDil: _v(dilShares, fy),
-    };
-  });
+function _selectYearsFromFieldMaps(fieldMaps) {
+  const fySet = new Set();
+  for (let i = 0; i < fieldMaps.length; i++) {
+    const values = fieldMaps[i].values;
+    for (const key of Object.keys(values)) fySet.add(Number(key));
+  }
+  return Array.from(fySet).sort((a, b) => b - a).slice(0, 5);
 }
 
-function _buildBS(facts, years) {
-  const cash     = _extractInstant(facts, BS_TAGS.cash, {});
-  const curAssets= _extractInstant(facts, BS_TAGS.curAssets, {});
-  const totAssets= _extractInstant(facts, BS_TAGS.totAssets, {});
-  const curLiab  = _extractInstant(facts, BS_TAGS.curLiab, {});
-  const ltDebt   = _extractInstant(facts, BS_TAGS.ltDebt, {});
-  const totLiab  = _extractInstant(facts, BS_TAGS.totLiab, {});
-  const equity   = _extractInstant(facts, BS_TAGS.equity, {});
-  const sharesOS = _extractInstant(facts, BS_TAGS.sharesOS, { isShares: true });
+function _setVerificationField(verification, section, fy, field, meta) {
+  if (!meta) return;
+  if (!verification.fields[section][fy]) verification.fields[section][fy] = {};
+  verification.fields[section][fy][field] = meta;
+}
 
-  return years.map(function(fy) {
-    const totA = _v(totAssets, fy);
-    const totL = _v(totLiab, fy);
-    let   eq   = _v(equity, fy);
-    if (eq == null && totA != null && totL != null) eq = totA - totL;
-    const eqFinal = (eq != null && isFinite(eq)) ? eq : null;
-    let bvps = null;
-    if (eqFinal != null) {
-      const sh = _v(sharesOS, fy);
-      if (sh != null && sh !== 0) bvps = eqFinal / sh;
+function _buildIncomeStatement(facts, sector, filings, verification) {
+  const defs = FIELD_DEFS.incomeStatement;
+  const maps = {};
+  for (const field of Object.keys(defs)) {
+    maps[field] = _selectFieldMap(facts, filings, defs[field], sector, {
+      isShares: defs[field].unit === 'shares',
+    });
+  }
+  const sharesFallbackMap = _selectFieldMap(
+    facts,
+    filings,
+    { mode: 'instant', tags: SHARES_OUTSTANDING_FALLBACK_TAGS, unit: 'shares', sourceType: 'share_count' },
+    sector,
+    { isShares: true }
+  );
+
+  const years = _selectYearsFromFieldMaps([maps.revenue, maps.netIncome, maps.operatingIncome, maps.epsDiluted, maps.weightedAverageShsOutDil]);
+  const rows = years.map((fy) => {
+    const rev = _getFieldValue(maps.revenue, fy);
+    const cor = _getFieldValue(maps.costOfRevenue, fy);
+    let gp = _getFieldValue(maps.grossProfit, fy);
+    let dilutedShares = _getFieldValue(maps.weightedAverageShsOutDil, fy);
+    const grossProfitTags = _getTags(defs.grossProfit, sector);
+    if (gp == null && rev != null && cor != null && grossProfitTags.length > 0) {
+      gp = rev - cor;
+      const baseMeta = maps.costOfRevenue.meta[fy] || maps.revenue.meta[fy];
+      maps.grossProfit.meta[fy] = _cloneMeta(baseMeta, {
+        tagUsed: 'derived:grossProfit',
+        sourceType: 'derived',
+        confidence: 'medium',
+      });
+      maps.grossProfit.meta[fy].warnings.push('Derived gross profit from revenue - costOfRevenue');
     }
-    return {
-      date:                    _date([totAssets, equity], fy),
-      calendarYear:            String(fy),
-      cashAndCashEquivalents:  _v(cash, fy),
-      totalCurrentAssets:      _v(curAssets, fy),
-      totalAssets:             totA,
-      totalCurrentLiabilities: _v(curLiab, fy),
-      longTermDebt:            _v(ltDebt, fy),
-      totalLiabilities:        totL,
-      totalStockholdersEquity: eqFinal,
-      bookValuePerShare:       (bvps != null && isFinite(bvps)) ? bvps : null,
+    if (dilutedShares == null) {
+      dilutedShares = _getFieldValue(sharesFallbackMap, fy);
+      if (dilutedShares != null) {
+        maps.weightedAverageShsOutDil.values[fy] = sharesFallbackMap.values[fy];
+        const baseMeta = sharesFallbackMap.meta[fy];
+        maps.weightedAverageShsOutDil.meta[fy] = _cloneMeta(baseMeta, {
+          tagUsed: 'fallback:' + (baseMeta ? baseMeta.tagUsed : 'sharesOutstanding'),
+          sourceType: 'share_count',
+          confidence: 'medium',
+        });
+        maps.weightedAverageShsOutDil.meta[fy].warnings.push('Used common shares outstanding fallback for weightedAverageShsOutDil');
+      }
+    }
+    const row = {
+      year: String(fy),
+      date: _pickDate([maps.revenue, maps.netIncome, maps.operatingIncome], fy, filings),
+      calendarYear: String(fy),
+      revenue: rev,
+      costOfRevenue: _getFieldValue(maps.costOfRevenue, fy),
+      grossProfit: _sanitizeNumber(gp),
+      researchAndDevelopmentExpenses: _getFieldValue(maps.researchAndDevelopmentExpenses, fy),
+      sellingGeneralAndAdministrativeExpenses: _getFieldValue(maps.sellingGeneralAndAdministrativeExpenses, fy),
+      operatingIncome: _getFieldValue(maps.operatingIncome, fy),
+      interestExpense: _getFieldValue(maps.interestExpense, fy),
+      netIncome: _getFieldValue(maps.netIncome, fy),
+      epsDiluted: _getFieldValue(maps.epsDiluted, fy),
+      weightedAverageShsOutDil: dilutedShares,
     };
+
+    for (const field of Object.keys(row)) {
+      if (field === 'year' || field === 'date' || field === 'calendarYear') continue;
+      row[field] = _sanitizeNumber(row[field]);
+    }
+
+    _setVerificationField(verification, 'incomeStatement', fy, 'revenue', maps.revenue.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'costOfRevenue', maps.costOfRevenue.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'grossProfit', maps.grossProfit.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'researchAndDevelopmentExpenses', maps.researchAndDevelopmentExpenses.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'sellingGeneralAndAdministrativeExpenses', maps.sellingGeneralAndAdministrativeExpenses.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'operatingIncome', maps.operatingIncome.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'interestExpense', maps.interestExpense.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'netIncome', maps.netIncome.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'epsDiluted', maps.epsDiluted.meta[fy]);
+    _setVerificationField(verification, 'incomeStatement', fy, 'weightedAverageShsOutDil', maps.weightedAverageShsOutDil.meta[fy]);
+    return row;
   });
+
+  return { rows, maps };
 }
 
-function _buildCF(facts, years) {
-  const opCF        = _extractDuration(facts, CF_TAGS.opCF, {});
-  const capex       = _extractDuration(facts, CF_TAGS.capex, {});
-  const dividends   = _extractDuration(facts, CF_TAGS.dividends, {});
-  const buybacks    = _extractDuration(facts, CF_TAGS.buybacks, {});
-  const acquisitions= _extractDuration(facts, CF_TAGS.acquisitions, {});
-  const investCF    = _extractDuration(facts, CF_TAGS.investCF, {});
-  const finCF       = _extractDuration(facts, CF_TAGS.finCF, {});
+function _buildBalanceSheet(facts, filings, incomeMaps, verification) {
+  const defs = FIELD_DEFS.balanceSheet;
+  const maps = {};
+  for (const field of Object.keys(defs)) {
+    maps[field] = _selectFieldMap(facts, filings, defs[field], 'general', {
+      isShares: defs[field].unit === 'shares',
+    });
+  }
 
-  return years.map(function(fy) {
-    const opCFv    = _v(opCF, fy);
-    const capexRaw = _v(capex, fy);
-    const capexv   = capexRaw != null ? -Math.abs(capexRaw) : null;
-    const fcf      = (opCFv != null && capexRaw != null) ? opCFv - Math.abs(capexRaw) : null;
-    const acqRaw   = _v(acquisitions, fy);
-    const divRaw   = _v(dividends, fy);
-    const buyRaw   = _v(buybacks, fy);
-    return {
-      date:                   _date([opCF, investCF], fy),
-      calendarYear:           String(fy),
-      operatingCashFlow:      opCFv,
-      capitalExpenditure:     capexv,
-      freeCashFlow:           (fcf != null && isFinite(fcf)) ? fcf : null,
-      acquisitionsNet:        acqRaw != null ? -Math.abs(acqRaw) : null,
-      dividendsPaid:          divRaw != null ? -Math.abs(divRaw) : null,
-      commonStockRepurchased: buyRaw != null ? -Math.abs(buyRaw) : null,
-      netCashProvidedByUsedInInvestingActivities: _v(investCF, fy),
-      netCashUsedProvidedByFinancingActivities:   _v(finCF, fy),
+  const years = _selectYearsFromFieldMaps([
+    maps.totalAssets,
+    maps.totalLiabilities,
+    maps.totalStockholdersEquity,
+    maps.cashAndCashEquivalents,
+    maps.longTermDebt,
+    incomeMaps.weightedAverageShsOutDil,
+  ]);
+
+  const rows = years.map((fy) => {
+    const assets = _getFieldValue(maps.totalAssets, fy);
+    let liabilities = _getFieldValue(maps.totalLiabilities, fy);
+    let equity = _getFieldValue(maps.totalStockholdersEquity, fy);
+    if (equity == null && assets != null && liabilities != null) {
+      equity = assets - liabilities;
+      const baseMeta = maps.totalAssets.meta[fy] || maps.totalLiabilities.meta[fy];
+      maps.totalStockholdersEquity.meta[fy] = _cloneMeta(baseMeta, {
+        tagUsed: 'derived:totalStockholdersEquity',
+        sourceType: 'derived',
+        confidence: 'medium',
+      });
+      maps.totalStockholdersEquity.meta[fy].warnings.push('Derived totalStockholdersEquity from assets - liabilities');
+    }
+    if (liabilities == null && assets != null && equity != null) {
+      liabilities = assets - equity;
+      const baseMeta = maps.totalAssets.meta[fy] || maps.totalStockholdersEquity.meta[fy];
+      maps.totalLiabilities.meta[fy] = _cloneMeta(baseMeta, {
+        tagUsed: 'derived:totalLiabilities',
+        sourceType: 'derived',
+        confidence: 'medium',
+      });
+      maps.totalLiabilities.meta[fy].warnings.push('Derived totalLiabilities from assets - totalStockholdersEquity');
+    }
+
+    let bvps = _getFieldValue(maps.bookValuePerShareDirect, fy);
+    if (bvps == null && equity != null && _getFieldValue(incomeMaps.weightedAverageShsOutDil, fy) != null) {
+      const shares = _getFieldValue(incomeMaps.weightedAverageShsOutDil, fy);
+      if (shares !== 0) {
+        bvps = equity / shares;
+        const baseMeta = incomeMaps.weightedAverageShsOutDil.meta[fy] || maps.totalStockholdersEquity.meta[fy];
+        maps.bookValuePerShareDirect.meta[fy] = _cloneMeta(baseMeta, {
+          tagUsed: 'derived:bookValuePerShare',
+          sourceType: 'derived',
+          confidence: (baseMeta && baseMeta.confidence === 'medium') ? 'medium' : 'high',
+        });
+        maps.bookValuePerShareDirect.meta[fy].warnings.push('Derived bookValuePerShare from totalStockholdersEquity / weightedAverageShsOutDil');
+      }
+    }
+
+    const row = {
+      year: String(fy),
+      date: _pickDate([maps.totalAssets, maps.totalStockholdersEquity, maps.totalLiabilities], fy, filings),
+      calendarYear: String(fy),
+      cashAndCashEquivalents: _getFieldValue(maps.cashAndCashEquivalents, fy),
+      totalCurrentAssets: _getFieldValue(maps.totalCurrentAssets, fy),
+      totalAssets: assets,
+      totalCurrentLiabilities: _getFieldValue(maps.totalCurrentLiabilities, fy),
+      longTermDebt: _getFieldValue(maps.longTermDebt, fy),
+      totalLiabilities: liabilities,
+      totalStockholdersEquity: equity,
+      bookValuePerShare: bvps,
     };
+
+    for (const field of Object.keys(row)) {
+      if (field === 'year' || field === 'date' || field === 'calendarYear') continue;
+      row[field] = _sanitizeNumber(row[field]);
+    }
+
+    _setVerificationField(verification, 'balanceSheet', fy, 'cashAndCashEquivalents', maps.cashAndCashEquivalents.meta[fy]);
+    _setVerificationField(verification, 'balanceSheet', fy, 'totalCurrentAssets', maps.totalCurrentAssets.meta[fy]);
+    _setVerificationField(verification, 'balanceSheet', fy, 'totalAssets', maps.totalAssets.meta[fy]);
+    _setVerificationField(verification, 'balanceSheet', fy, 'totalCurrentLiabilities', maps.totalCurrentLiabilities.meta[fy]);
+    _setVerificationField(verification, 'balanceSheet', fy, 'longTermDebt', maps.longTermDebt.meta[fy]);
+    _setVerificationField(verification, 'balanceSheet', fy, 'totalLiabilities', maps.totalLiabilities.meta[fy]);
+    _setVerificationField(verification, 'balanceSheet', fy, 'totalStockholdersEquity', maps.totalStockholdersEquity.meta[fy]);
+    _setVerificationField(verification, 'balanceSheet', fy, 'bookValuePerShare', maps.bookValuePerShareDirect.meta[fy]);
+    return row;
   });
+
+  return { rows, maps };
 }
 
-// ── EDGAR quality check ───────────────────────────────────────────────────────
+function _buildCashFlow(facts, filings, verification) {
+  const defs = FIELD_DEFS.cashFlow;
+  const maps = {};
+  for (const field of Object.keys(defs)) {
+    maps[field] = _selectFieldMap(facts, filings, defs[field], 'general', {});
+  }
 
-function _edgarQualityOk(is, bs, cf) {
-  // Pass if at least 2 of 3 statements carry meaningful data.
-  // This avoids discarding a good EDGAR result just because IS coverage is sparse
-  // (e.g., energy/financial companies with non-standard IS tag sets).
-  const isOk = is.some(function(r) {
-    return r.revenue != null || r.netIncome != null || r.operatingIncome != null;
+  const years = _selectYearsFromFieldMaps([
+    maps.operatingCashFlow,
+    maps.capitalExpenditure,
+    maps.netCashProvidedByUsedInInvestingActivities,
+    maps.netCashUsedProvidedByFinancingActivities,
+  ]);
+
+  const rows = years.map((fy) => {
+    const opCF = _getFieldValue(maps.operatingCashFlow, fy);
+    const capexRaw = _getFieldValue(maps.capitalExpenditure, fy);
+    const capex = capexRaw != null ? -Math.abs(capexRaw) : null;
+    const fcf = (opCF != null && capex != null) ? opCF - Math.abs(capex) : null;
+    const row = {
+      year: String(fy),
+      date: _pickDate([maps.operatingCashFlow, maps.capitalExpenditure, maps.netCashProvidedByUsedInInvestingActivities], fy, filings),
+      calendarYear: String(fy),
+      operatingCashFlow: opCF,
+      capitalExpenditure: capex,
+      freeCashFlow: fcf,
+      acquisitionsNet: _getFieldValue(maps.acquisitionsNet, fy) != null ? -Math.abs(_getFieldValue(maps.acquisitionsNet, fy)) : null,
+      dividendsPaid: _getFieldValue(maps.dividendsPaid, fy) != null ? -Math.abs(_getFieldValue(maps.dividendsPaid, fy)) : null,
+      commonStockRepurchased: _getFieldValue(maps.commonStockRepurchased, fy) != null ? -Math.abs(_getFieldValue(maps.commonStockRepurchased, fy)) : null,
+      netCashProvidedByUsedInInvestingActivities: _getFieldValue(maps.netCashProvidedByUsedInInvestingActivities, fy),
+      netCashUsedProvidedByFinancingActivities: _getFieldValue(maps.netCashUsedProvidedByFinancingActivities, fy),
+    };
+
+    for (const field of Object.keys(row)) {
+      if (field === 'year' || field === 'date' || field === 'calendarYear') continue;
+      row[field] = _sanitizeNumber(row[field]);
+    }
+
+    const capexMeta = maps.capitalExpenditure.meta[fy];
+    if (row.freeCashFlow != null) {
+      const baseMeta = capexMeta || maps.operatingCashFlow.meta[fy];
+      maps.freeCashFlowMeta = maps.freeCashFlowMeta || {};
+      maps.freeCashFlowMeta[fy] = _cloneMeta(baseMeta, {
+        tagUsed: 'derived:freeCashFlow',
+        sourceType: 'derived',
+        confidence: 'high',
+      });
+      maps.freeCashFlowMeta[fy].warnings.push('Derived freeCashFlow from operatingCashFlow - abs(capitalExpenditure)');
+    }
+
+    _setVerificationField(verification, 'cashFlow', fy, 'operatingCashFlow', maps.operatingCashFlow.meta[fy]);
+    _setVerificationField(verification, 'cashFlow', fy, 'capitalExpenditure', capexMeta);
+    _setVerificationField(verification, 'cashFlow', fy, 'freeCashFlow', maps.freeCashFlowMeta ? maps.freeCashFlowMeta[fy] : null);
+    _setVerificationField(verification, 'cashFlow', fy, 'acquisitionsNet', maps.acquisitionsNet.meta[fy]);
+    _setVerificationField(verification, 'cashFlow', fy, 'dividendsPaid', maps.dividendsPaid.meta[fy]);
+    _setVerificationField(verification, 'cashFlow', fy, 'commonStockRepurchased', maps.commonStockRepurchased.meta[fy]);
+    _setVerificationField(verification, 'cashFlow', fy, 'netCashProvidedByUsedInInvestingActivities', maps.netCashProvidedByUsedInInvestingActivities.meta[fy]);
+    _setVerificationField(verification, 'cashFlow', fy, 'netCashUsedProvidedByFinancingActivities', maps.netCashUsedProvidedByFinancingActivities.meta[fy]);
+    return row;
   });
-  const bsOk = bs.some(function(r) {
-    return r.totalAssets != null || r.totalStockholdersEquity != null;
-  });
-  const cfOk = cf.some(function(r) {
-    return r.operatingCashFlow != null;
-  });
+
+  return { rows, maps };
+}
+
+function _statementHasData(rows, fields) {
+  return rows.some((row) => fields.some((field) => row[field] != null));
+}
+
+function _edgarQualityOk(incomeStatement, balanceSheet, cashFlow) {
+  const isOk = _statementHasData(incomeStatement, ['revenue', 'netIncome', 'operatingIncome', 'epsDiluted', 'weightedAverageShsOutDil']);
+  const bsOk = _statementHasData(balanceSheet, ['cashAndCashEquivalents', 'totalAssets', 'longTermDebt', 'totalLiabilities', 'totalStockholdersEquity', 'bookValuePerShare']);
+  const cfOk = _statementHasData(cashFlow, ['operatingCashFlow', 'capitalExpenditure', 'freeCashFlow']);
   return (isOk ? 1 : 0) + (bsOk ? 1 : 0) + (cfOk ? 1 : 0) >= 2;
 }
-
-// ── Companyfacts fetch ────────────────────────────────────────────────────────
 
 async function _getCompanyFacts(paddedCik) {
   const cached = _factsCache.get(paddedCik);
   if (cached && (Date.now() - cached.time < FACTS_TTL)) return cached.data;
-  const ctrl  = new AbortController();
+
+  const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
   try {
     const data = await _edgarFetch(EDGAR_FACTS_URL(paddedCik), ctrl.signal);
     clearTimeout(timer);
-    _factsCache.set(paddedCik, { data: data, time: Date.now() });
+    _factsCache.set(paddedCik, { data, time: Date.now() });
     return data;
   } catch (e) {
     clearTimeout(timer);
@@ -564,141 +846,179 @@ async function _getCompanyFacts(paddedCik) {
   }
 }
 
-// ── EDGAR attempt ─────────────────────────────────────────────────────────────
+function _finalizeVerification(verification) {
+  const compact = {
+    warnings: verification.warnings.slice(),
+    fields: {
+      incomeStatement: verification.fields.incomeStatement,
+      balanceSheet: verification.fields.balanceSheet,
+      cashFlow: verification.fields.cashFlow,
+    },
+  };
+  if (!compact.warnings.length && !Object.keys(compact.fields.incomeStatement).length
+      && !Object.keys(compact.fields.balanceSheet).length
+      && !Object.keys(compact.fields.cashFlow).length) {
+    return undefined;
+  }
+  return compact;
+}
+
+function _stripInvalidNumbers(rows) {
+  return rows.map((row) => {
+    const clean = Object.assign({}, row);
+    for (const key of Object.keys(clean)) {
+      if (key === 'year' || key === 'date' || key === 'calendarYear') continue;
+      clean[key] = _sanitizeNumber(clean[key]);
+    }
+    return clean;
+  });
+}
 
 async function _tryEdgar(ticker) {
   const entry = await _resolveCIK(ticker);
   if (!entry) return null;
 
-  const cik        = entry.cik;
-  const entityName = entry.name;
+  const cik = entry.cik;
+  const [subs, facts] = await Promise.all([_getSubmissions(cik), _getCompanyFacts(cik)]);
+  const sector = _detectSectorFromSubmissions(subs);
+  const filings = _buildAnnualFilings(subs);
+  const verification = {
+    warnings: [],
+    fields: {
+      incomeStatement: {},
+      balanceSheet: {},
+      cashFlow: {},
+    },
+  };
 
-  // Fetch sector (SIC) and companyfacts in parallel
-  const results = await Promise.all([
-    _detectSector(cik),
-    _getCompanyFacts(cik),
+  const income = _buildIncomeStatement(facts, sector, filings, verification);
+  const balance = _buildBalanceSheet(facts, filings, income.maps, verification);
+  const cashFlow = _buildCashFlow(facts, filings, verification);
+
+  let years = _selectYearsFromFieldMaps([
+    income.maps.revenue,
+    income.maps.netIncome,
+    income.maps.epsDiluted,
+    income.maps.weightedAverageShsOutDil,
+    balance.maps.totalAssets,
+    balance.maps.totalLiabilities,
+    balance.maps.longTermDebt,
+    balance.maps.cashAndCashEquivalents,
+    cashFlow.maps.operatingCashFlow,
+    cashFlow.maps.capitalExpenditure,
   ]);
-  const sector = results[0];
-  const facts  = results[1];
 
-  console.log('[EDGAR ' + ticker + '] sector=' + sector + ' cik=' + cik);
-
-  // Year selection anchored on revenue + assets + opCF
-  const revTags    = (SECTOR_TAGS[sector] || SECTOR_TAGS.general).is.revenue;
-  const revenueMap = _extractDuration(facts, revTags, {});
-  const assetsMap  = _extractInstant(facts, BS_TAGS.totAssets, {});
-  const opCFMap    = _extractDuration(facts, CF_TAGS.opCF, {});
-
-  const years = _selectYears([revenueMap, assetsMap, opCFMap]);
   if (!years.length) return null;
+  years = years.slice(0, 5);
 
-  const incomeStatement = _buildIS(facts, sector, years);
-  const balanceSheet    = _buildBS(facts, years);
-  const cashFlow        = _buildCF(facts, years);
+  const yearSet = new Set(years.map(String));
+  const incomeRows = _stripInvalidNumbers(income.rows.filter((row) => yearSet.has(row.year)));
+  const balanceRows = _stripInvalidNumbers(balance.rows.filter((row) => yearSet.has(row.year)));
+  const cashRows = _stripInvalidNumbers(cashFlow.rows.filter((row) => yearSet.has(row.year)));
 
-  if (!incomeStatement.length && !balanceSheet.length && !cashFlow.length) return null;
-
-  if (!_edgarQualityOk(incomeStatement, balanceSheet, cashFlow)) {
-    console.log('[EDGAR ' + ticker + '] quality check failed — deferring to FMP');
+  if (!_edgarQualityOk(incomeRows, balanceRows, cashRows)) {
+    _pushWarning(verification.warnings, 'EDGAR annual extraction did not meet minimum statement coverage');
     return null;
   }
 
+  await _supplementWithFmp(ticker, incomeRows, balanceRows, cashRows, verification);
+  _annotateUnresolvedFinancialFields(facts, incomeRows, balanceRows, verification);
+
+  if (!_statementHasData(cashRows, ['capitalExpenditure'])) {
+    if (sector === 'financial') {
+      _pushWarning(verification.warnings, 'Capital expenditure unavailable from annual companyfacts for this financial-sector issuer; freeCashFlow not derived without reliable CapEx');
+    } else {
+      _pushWarning(verification.warnings, 'Capital expenditure unavailable from annual companyfacts');
+    }
+  }
+
   return {
-    entity: entityName,
-    ticker: ticker,
-    cik:    cik.replace(/^0+/, ''),
-    source: 'SEC EDGAR (10-K)',
-    incomeStatement: incomeStatement,
-    balanceSheet:    balanceSheet,
-    cashFlow:        cashFlow,
+    entity: entry.name,
+    ticker,
+    cik: cik.replace(/^0+/, ''),
+    source: 'SEC EDGAR annual companyfacts',
+    incomeStatement: incomeRows,
+    balanceSheet: balanceRows,
+    cashFlow: cashRows,
+    verification: _finalizeVerification(verification),
   };
 }
 
-// ── FMP fallback ──────────────────────────────────────────────────────────────
-
 function _normFmpIS(arr) {
-  return (Array.isArray(arr) ? arr : []).slice(0, 5).map(function(r) {
-    return {
-      date:              r.date              != null ? r.date              : null,
-      calendarYear:      r.calendarYear      != null ? r.calendarYear      : null,
-      revenue:           r.revenue           != null ? r.revenue           : null,
-      costOfRevenue:     r.costOfRevenue     != null ? r.costOfRevenue     : null,
-      grossProfit:       r.grossProfit       != null ? r.grossProfit       : null,
-      researchAndDevelopmentExpenses:          r.researchAndDevelopmentExpenses          != null ? r.researchAndDevelopmentExpenses          : null,
-      sellingGeneralAndAdministrativeExpenses: r.sellingGeneralAndAdministrativeExpenses != null ? r.sellingGeneralAndAdministrativeExpenses : null,
-      operatingIncome:   r.operatingIncome   != null ? r.operatingIncome   : null,
-      interestExpense:   r.interestExpense   != null ? r.interestExpense   : null,
-      netIncome:         r.netIncome         != null ? r.netIncome         : null,
-      epsDiluted:        r.epsDiluted        != null ? r.epsDiluted        : null,
-      weightedAverageShsOutDil: r.weightedAverageShsOutDil != null ? r.weightedAverageShsOutDil : null,
-    };
-  });
+  return (Array.isArray(arr) ? arr : []).slice(0, 5).map((r) => ({
+    year: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
+    date: r.date != null ? r.date : null,
+    calendarYear: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
+    revenue: _sanitizeNumber(r.revenue),
+    costOfRevenue: _sanitizeNumber(r.costOfRevenue),
+    grossProfit: _sanitizeNumber(r.grossProfit),
+    researchAndDevelopmentExpenses: _sanitizeNumber(r.researchAndDevelopmentExpenses),
+    sellingGeneralAndAdministrativeExpenses: _sanitizeNumber(r.sellingGeneralAndAdministrativeExpenses),
+    operatingIncome: _sanitizeNumber(r.operatingIncome),
+    interestExpense: _sanitizeNumber(r.interestExpense),
+    netIncome: _sanitizeNumber(r.netIncome),
+    epsDiluted: _sanitizeNumber(r.epsDiluted),
+    weightedAverageShsOutDil: _sanitizeNumber(r.weightedAverageShsOutDil),
+  }));
 }
 
 function _normFmpBS(arr) {
-  return (Array.isArray(arr) ? arr : []).slice(0, 5).map(function(r) {
-    return {
-      date:                    r.date                    != null ? r.date                    : null,
-      calendarYear:            r.calendarYear            != null ? r.calendarYear            : null,
-      cashAndCashEquivalents:  r.cashAndCashEquivalents  != null ? r.cashAndCashEquivalents  : null,
-      totalCurrentAssets:      r.totalCurrentAssets      != null ? r.totalCurrentAssets      : null,
-      totalAssets:             r.totalAssets             != null ? r.totalAssets             : null,
-      totalCurrentLiabilities: r.totalCurrentLiabilities != null ? r.totalCurrentLiabilities : null,
-      longTermDebt:            r.longTermDebt            != null ? r.longTermDebt            : null,
-      totalLiabilities:        r.totalLiabilities        != null ? r.totalLiabilities        : null,
-      totalStockholdersEquity: r.totalStockholdersEquity != null ? r.totalStockholdersEquity : null,
-      bookValuePerShare:       r.bookValuePerShare        != null ? r.bookValuePerShare        : null,
-    };
-  });
+  return (Array.isArray(arr) ? arr : []).slice(0, 5).map((r) => ({
+    year: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
+    date: r.date != null ? r.date : null,
+    calendarYear: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
+    cashAndCashEquivalents: _sanitizeNumber(r.cashAndCashEquivalents),
+    totalCurrentAssets: _sanitizeNumber(r.totalCurrentAssets),
+    totalAssets: _sanitizeNumber(r.totalAssets),
+    totalCurrentLiabilities: _sanitizeNumber(r.totalCurrentLiabilities),
+    longTermDebt: _sanitizeNumber(r.longTermDebt),
+    totalLiabilities: _sanitizeNumber(r.totalLiabilities),
+    totalStockholdersEquity: _sanitizeNumber(r.totalStockholdersEquity),
+    bookValuePerShare: _sanitizeNumber(r.bookValuePerShare),
+  }));
 }
 
 function _normFmpCF(arr) {
-  return (Array.isArray(arr) ? arr : []).slice(0, 5).map(function(r) {
-    return {
-      date:                   r.date                   != null ? r.date                   : null,
-      calendarYear:           r.calendarYear           != null ? r.calendarYear           : null,
-      operatingCashFlow:      r.operatingCashFlow      != null ? r.operatingCashFlow      : null,
-      capitalExpenditure:     r.capitalExpenditure     != null ? r.capitalExpenditure     : null,
-      freeCashFlow:           r.freeCashFlow           != null ? r.freeCashFlow           : null,
-      acquisitionsNet:        r.acquisitionsNet        != null ? r.acquisitionsNet        : null,
-      dividendsPaid:          r.dividendsPaid          != null ? r.dividendsPaid          : null,
-      commonStockRepurchased: r.commonStockRepurchased != null ? r.commonStockRepurchased : null,
-      netCashProvidedByUsedInInvestingActivities: r.netCashProvidedByUsedInInvestingActivities != null ? r.netCashProvidedByUsedInInvestingActivities : null,
-      netCashUsedProvidedByFinancingActivities:   r.netCashUsedProvidedByFinancingActivities   != null ? r.netCashUsedProvidedByFinancingActivities   : null,
-    };
-  });
+  return (Array.isArray(arr) ? arr : []).slice(0, 5).map((r) => ({
+    year: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
+    date: r.date != null ? r.date : null,
+    calendarYear: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
+    operatingCashFlow: _sanitizeNumber(r.operatingCashFlow),
+    capitalExpenditure: _sanitizeNumber(r.capitalExpenditure),
+    freeCashFlow: _sanitizeNumber(r.freeCashFlow),
+    acquisitionsNet: _sanitizeNumber(r.acquisitionsNet),
+    dividendsPaid: _sanitizeNumber(r.dividendsPaid),
+    commonStockRepurchased: _sanitizeNumber(r.commonStockRepurchased),
+    netCashProvidedByUsedInInvestingActivities: _sanitizeNumber(r.netCashProvidedByUsedInInvestingActivities),
+    netCashUsedProvidedByFinancingActivities: _sanitizeNumber(r.netCashUsedProvidedByFinancingActivities),
+  }));
 }
 
-async function _tryFmp(ticker) {
-  const KEY = process.env.FMP_API_KEY;
-  if (!KEY) return null;
+async function _fetchFmpPayload(ticker) {
+  const key = process.env.FMP_API_KEY;
+  if (!key) return null;
 
-  const ctrl  = new AbortController();
+  const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
   try {
-    const all = await Promise.all([
-      _fmpFetch('/income-statement/' + encodeURIComponent(ticker) + '?limit=5', KEY, ctrl.signal),
-      _fmpFetch('/balance-sheet-statement/' + encodeURIComponent(ticker) + '?limit=5', KEY, ctrl.signal),
-      _fmpFetch('/cash-flow-statement/' + encodeURIComponent(ticker) + '?limit=5', KEY, ctrl.signal),
+    const [isRaw, bsRaw, cfRaw] = await Promise.all([
+      _fmpFetch('/income-statement/' + encodeURIComponent(ticker) + '?limit=5', key, ctrl.signal),
+      _fmpFetch('/balance-sheet-statement/' + encodeURIComponent(ticker) + '?limit=5', key, ctrl.signal),
+      _fmpFetch('/cash-flow-statement/' + encodeURIComponent(ticker) + '?limit=5', key, ctrl.signal),
     ]);
     clearTimeout(timer);
 
-    const isRaw = all[0];
-    const bsRaw = all[1];
-    const cfRaw = all[2];
-
-    const incomeStatement = _normFmpIS(isRaw || []);
-    const balanceSheet    = _normFmpBS(bsRaw || []);
-    const cashFlow        = _normFmpCF(cfRaw || []);
+    const incomeStatement = _normFmpIS(isRaw);
+    const balanceSheet = _normFmpBS(bsRaw);
+    const cashFlow = _normFmpCF(cfRaw);
     if (!incomeStatement.length && !balanceSheet.length && !cashFlow.length) return null;
 
     return {
-      entity: (Array.isArray(isRaw) && isRaw[0] && isRaw[0].symbol) ? isRaw[0].symbol : ticker,
-      ticker: ticker,
-      source: 'FMP (SEC filings)',
-      incomeStatement: incomeStatement,
-      balanceSheet:    balanceSheet,
-      cashFlow:        cashFlow,
+      entity: Array.isArray(isRaw) && isRaw[0] && isRaw[0].symbol ? isRaw[0].symbol : ticker,
+      ticker,
+      incomeStatement,
+      balanceSheet,
+      cashFlow,
     };
   } catch (e) {
     clearTimeout(timer);
@@ -706,7 +1026,201 @@ async function _tryFmp(ticker) {
   }
 }
 
-// ── Route handler ─────────────────────────────────────────────────────────────
+function _makeSupplementMeta(fy, field, sourceLabel) {
+  return {
+    tagUsed: sourceLabel + ':' + field,
+    sourceType: 'supplemental_fallback',
+    form: null,
+    accession: null,
+    filedDate: null,
+    fiscalYear: Number(fy),
+    confidence: 'low',
+    warnings: ['Supplemented from ' + sourceLabel + ' because SEC EDGAR annual companyfacts was blank'],
+  };
+}
+
+function _rowYear(row) {
+  return String((row && (row.year || row.calendarYear)) || '');
+}
+
+function _rowDate(row) {
+  return String((row && row.date) || '');
+}
+
+function _rowYearFromDate(row) {
+  return _rowDate(row).slice(0, 4);
+}
+
+function _valueLooksPlausible(field, value) {
+  const num = _sanitizeNumber(value);
+  if (num == null) return false;
+  if (field === 'weightedAverageShsOutDil' || field === 'longTermDebt') return num >= 0;
+  return true;
+}
+
+function _needsFmpSupplement(incomeRows, balanceRows, cashRows) {
+  return incomeRows.some((row) => row.epsDiluted == null || row.weightedAverageShsOutDil == null)
+    || balanceRows.some((row) => row.longTermDebt == null || row.bookValuePerShare == null);
+}
+
+function _mergeSupplementSection(baseRows, supplementRows, section, fields, verification) {
+  const supplementByYear = new Map((Array.isArray(supplementRows) ? supplementRows : []).map((row) => [_rowYear(row), row]));
+  let changed = 0;
+  for (let i = 0; i < baseRows.length; i++) {
+    const row = baseRows[i];
+    const fy = _rowYear(row);
+    const supplement = supplementByYear.get(fy);
+    if (!supplement) continue;
+    if (_rowYearFromDate(supplement) && _rowYearFromDate(supplement) !== fy) continue;
+    for (let j = 0; j < fields.length; j++) {
+      const field = fields[j];
+      if (row[field] != null || supplement[field] == null) continue;
+      const value = _sanitizeNumber(supplement[field]);
+      if (!_valueLooksPlausible(field, value)) continue;
+      row[field] = value;
+      _setVerificationField(verification, section, Number(fy), field, _makeSupplementMeta(fy, field, 'FMP'));
+      changed++;
+    }
+  }
+  return changed;
+}
+
+function _deriveSupplementedBookValuePerShare(incomeRows, balanceRows, verification) {
+  const incomeByYear = new Map((Array.isArray(incomeRows) ? incomeRows : []).map((row) => [_rowYear(row), row]));
+  let changed = 0;
+  for (let i = 0; i < balanceRows.length; i++) {
+    const row = balanceRows[i];
+    if (row.bookValuePerShare != null || row.totalStockholdersEquity == null) continue;
+    const incomeRow = incomeByYear.get(_rowYear(row));
+    const shares = incomeRow ? _sanitizeNumber(incomeRow.weightedAverageShsOutDil) : null;
+    if (shares == null || shares === 0) continue;
+    row.bookValuePerShare = row.totalStockholdersEquity / shares;
+    _setVerificationField(
+      verification,
+      'balanceSheet',
+      Number(_rowYear(row)),
+      'bookValuePerShare',
+      {
+        tagUsed: 'derived:bookValuePerShare',
+        sourceType: 'derived',
+        form: null,
+        accession: null,
+        filedDate: null,
+        fiscalYear: Number(_rowYear(row)),
+        confidence: 'low',
+        warnings: ['Derived from totalStockholdersEquity / weightedAverageShsOutDil after supplemental fallback'],
+      }
+    );
+    changed++;
+  }
+  return changed;
+}
+
+async function _supplementWithFmp(ticker, incomeRows, balanceRows, cashRows, verification) {
+  if (!_needsFmpSupplement(incomeRows, balanceRows, cashRows)) return false;
+  const fmpPayload = await _fetchFmpPayload(ticker);
+  if (!fmpPayload) return false;
+
+  let changed = 0;
+  changed += _mergeSupplementSection(incomeRows, fmpPayload.incomeStatement, 'incomeStatement', ['epsDiluted', 'weightedAverageShsOutDil'], verification);
+  changed += _mergeSupplementSection(balanceRows, fmpPayload.balanceSheet, 'balanceSheet', ['longTermDebt', 'bookValuePerShare'], verification);
+  changed += _deriveSupplementedBookValuePerShare(incomeRows, balanceRows, verification);
+
+  if (changed > 0) {
+    _pushWarning(verification.warnings, 'Supplemented missing annual fields from FMP where SEC EDGAR companyfacts was blank');
+  }
+  return changed > 0;
+}
+
+function _hasAnnualFactInUnits(facts, tags, allowedUnits, disallowedUnits) {
+  const allowed = new Set((allowedUnits || []).map(_normalizeUnit));
+  const disallowed = new Set((disallowedUnits || []).map(_normalizeUnit));
+  for (let taxonomyIndex = 0; taxonomyIndex < _TAXONOMIES.length; taxonomyIndex++) {
+    const taxonomy = _TAXONOMIES[taxonomyIndex];
+    for (let tagIndex = 0; tagIndex < tags.length; tagIndex++) {
+      const tag = tags[tagIndex];
+      const tagData = facts && facts.facts && facts.facts[taxonomy] && facts.facts[taxonomy][tag];
+      if (!tagData || !tagData.units) continue;
+      for (const unit of Object.keys(tagData.units)) {
+        const normalizedUnit = _normalizeUnit(unit);
+        if (allowed.size && !allowed.has(normalizedUnit)) continue;
+        if (disallowed.size && !disallowed.has(normalizedUnit)) continue;
+        const entries = tagData.units[unit] || [];
+        for (let i = 0; i < entries.length; i++) {
+          if (_isAnnualFact(entries[i], 'instant')) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function _setUnresolvedFieldMeta(verification, section, fy, field, warning) {
+  if (verification.fields[section][fy] && verification.fields[section][fy][field]) return;
+  _setVerificationField(verification, section, fy, field, {
+    tagUsed: null,
+    sourceType: 'unavailable',
+    form: null,
+    accession: null,
+    filedDate: null,
+    fiscalYear: Number(fy),
+    confidence: 'low',
+    warnings: [warning],
+  });
+}
+
+function _annotateUnresolvedFinancialFields(facts, incomeRows, balanceRows, verification) {
+  if (incomeRows.some((row) => row.epsDiluted == null)) {
+    _pushWarning(verification.warnings, 'No usable annual diluted EPS fact found in companyfacts for some rows');
+    for (let i = 0; i < incomeRows.length; i++) {
+      if (incomeRows[i].epsDiluted == null) {
+        _setUnresolvedFieldMeta(verification, 'incomeStatement', Number(_rowYear(incomeRows[i])), 'epsDiluted', 'No usable annual diluted EPS fact found in companyfacts');
+      }
+    }
+  }
+  if (incomeRows.some((row) => row.weightedAverageShsOutDil == null)) {
+    _pushWarning(verification.warnings, 'No usable annual diluted share-count fact found in companyfacts for some rows');
+    for (let i = 0; i < incomeRows.length; i++) {
+      if (incomeRows[i].weightedAverageShsOutDil == null) {
+        _setUnresolvedFieldMeta(verification, 'incomeStatement', Number(_rowYear(incomeRows[i])), 'weightedAverageShsOutDil', 'No usable annual diluted share-count fact found');
+      }
+    }
+  }
+  if (balanceRows.some((row) => row.bookValuePerShare == null)) {
+    _pushWarning(verification.warnings, 'Book value per share not derived for some rows because share-count basis was unavailable');
+    for (let i = 0; i < balanceRows.length; i++) {
+      if (balanceRows[i].bookValuePerShare == null) {
+        _setUnresolvedFieldMeta(verification, 'balanceSheet', Number(_rowYear(balanceRows[i])), 'bookValuePerShare', 'Book value per share not derived because share-count basis was unavailable');
+      }
+    }
+  }
+  if (balanceRows.some((row) => row.longTermDebt == null)) {
+    const debtTags = FIELD_DEFS.balanceSheet.longTermDebt.tags;
+    const hasMixedCurrencyDebt = _hasAnnualFactInUnits(facts, debtTags, [], ['eur', 'gbp', 'jpy', 'cad', 'cny']);
+    const warning = hasMixedCurrencyDebt
+      ? 'Long-term debt unavailable because only mixed-currency or non-comparable annual facts were found'
+      : 'No usable annual long-term debt fact found in companyfacts';
+    _pushWarning(verification.warnings, warning);
+    for (let i = 0; i < balanceRows.length; i++) {
+      if (balanceRows[i].longTermDebt == null) {
+        _setUnresolvedFieldMeta(verification, 'balanceSheet', Number(_rowYear(balanceRows[i])), 'longTermDebt', warning);
+      }
+    }
+  }
+}
+
+async function _tryFmp(ticker) {
+  const payload = await _fetchFmpPayload(ticker);
+  if (!payload) return null;
+
+  return Object.assign({}, payload, {
+    source: 'FMP (SEC filings fallback)',
+    verification: {
+      warnings: ['Served from FMP fallback because SEC EDGAR annual extraction was unavailable'],
+      fields: { incomeStatement: {}, balanceSheet: {}, cashFlow: {} },
+    },
+  });
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -717,22 +1231,21 @@ module.exports = async function handler(req, res) {
   let ticker = ((req.query && req.query.ticker) || '').trim().toUpperCase();
   if (!ticker && req.method === 'POST') {
     let body = req.body;
-    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (_) {} }
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (_) {}
+    }
     ticker = ((body && body.ticker) || '').trim().toUpperCase();
   }
   if (!ticker) return res.status(400).json({ ok: false, error: 'ticker required' });
 
-  // Cache check — v6_ busts all prior versions
-  const cacheKey = 'v6_' + ticker;
-  const cached   = _finCache.get(cacheKey);
+  const cacheKey = 'v7_' + _normalizeTicker(ticker);
+  const cached = _finCache.get(cacheKey);
   if (cached && (Date.now() - cached.time < FIN_TTL)) {
     return res.status(200).json(Object.assign({ ok: true, cached: true }, cached.data));
   }
 
-  // Stage 1: Try SEC EDGAR
   let payload = null;
   let lastErr = null;
-
   try {
     payload = await _tryEdgar(ticker);
   } catch (e) {
@@ -740,7 +1253,6 @@ module.exports = async function handler(req, res) {
     console.log('[financials] EDGAR error for ' + ticker + ': ' + e.message);
   }
 
-  // Stage 2: FMP fallback if EDGAR returned nothing or failed quality check
   if (!payload) {
     try {
       payload = await _tryFmp(ticker);
@@ -749,7 +1261,6 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // Stage 3: Both failed
   if (!payload) {
     if (lastErr) {
       const timedOut = lastErr.name === 'AbortError';
@@ -762,20 +1273,25 @@ module.exports = async function handler(req, res) {
     return res.status(404).json({ ok: false, error: 'No financial data found for this ticker' });
   }
 
-  // Cache and return
-  const hasData = payload.incomeStatement.length > 0
-    || payload.balanceSheet.length > 0
-    || payload.cashFlow.length > 0;
-  if (hasData) {
+  if (payload.incomeStatement.length || payload.balanceSheet.length || payload.cashFlow.length) {
     _finCache.set(cacheKey, { data: payload, time: Date.now() });
   }
 
   return res.status(200).json(Object.assign({ ok: true, cached: false }, payload));
 };
 
-// Exported only for unit tests — not part of the public API
 module.exports._test = {
-  _extractDuration: _extractDuration,
-  _extractInstant:  _extractInstant,
-  _buildBS:         _buildBS,
+  _annotateUnresolvedFinancialFields,
+  _buildAnnualFilings,
+  _buildBalanceSheet,
+  _buildCashFlow,
+  _buildIncomeStatement,
+  _detectSectorFromSubmissions,
+  _edgarQualityOk,
+  _deriveSupplementedBookValuePerShare,
+  _hasAnnualFactInUnits,
+  _extractDuration: (facts, tags, opts) => _selectFieldMap(facts, { byFY: new Map(), byAccession: new Map() }, { mode: 'duration', tags, unit: opts && opts.isShares ? 'shares' : (opts && opts.isEps ? 'eps' : undefined), sourceType: 'test' }, 'general', opts),
+  _extractInstant: (facts, tags, opts) => _selectFieldMap(facts, { byFY: new Map(), byAccession: new Map() }, { mode: 'instant', tags, unit: opts && opts.isShares ? 'shares' : undefined, sourceType: 'test' }, 'general', opts),
+  _mergeSupplementSection,
+  _needsFmpSupplement,
 };
