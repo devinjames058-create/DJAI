@@ -167,6 +167,7 @@ const FIELD_DEFS = {
       tags: [
         'LongTermDebtNoncurrent',
         'LongTermDebt',
+        'DebtAndCapitalLeaseObligations',
         'LongTermBorrowings',
         'LongTermFHLBAdvances',
         'UnsecuredLongTermDebt',
@@ -407,11 +408,16 @@ function _getTags(def, sector) {
   return tagsBySector[sector] || tagsBySector.general || [];
 }
 
+function _normalizeUnit(unit) {
+  return String(unit || '').toLowerCase().replace(/\s+/g, '');
+}
+
 function _unitMatches(unit, def, isSharesOpt) {
-  if (def && def.unit === 'eps') return unit === 'USD/shares';
-  if (def && def.unit === 'shares') return unit === 'shares';
-  if (isSharesOpt) return unit === 'shares';
-  return unit === 'USD';
+  const normalized = _normalizeUnit(unit);
+  if (def && def.unit === 'eps') return normalized === 'usd/shares' || normalized === 'usd/share';
+  if (def && def.unit === 'shares') return normalized === 'shares';
+  if (isSharesOpt) return normalized === 'shares';
+  return normalized === 'usd';
 }
 
 function _isAnnualFact(entry, mode) {
@@ -426,9 +432,10 @@ function _isAnnualFact(entry, mode) {
 }
 
 function _deriveFiscalYear(entry) {
-  if (entry.fy != null && Number.isFinite(Number(entry.fy))) return Number(entry.fy);
   const fromEnd = parseInt(String(entry.end || '').slice(0, 4), 10);
-  return Number.isFinite(fromEnd) ? fromEnd : null;
+  if (Number.isFinite(fromEnd)) return fromEnd;
+  if (entry.fy != null && Number.isFinite(Number(entry.fy))) return Number(entry.fy);
+  return null;
 }
 
 function _confidenceFor(candidate) {
@@ -548,7 +555,9 @@ function _getFieldEnd(fieldMap, fy) {
   return fieldMap.values[fy] ? fieldMap.values[fy].end : null;
 }
 
-function _pickDate(fieldMaps, fy) {
+function _pickDate(fieldMaps, fy, filings) {
+  const filing = filings && filings.byFY ? filings.byFY.get(fy) : null;
+  if (filing && filing.reportDate) return filing.reportDate;
   for (let i = 0; i < fieldMaps.length; i++) {
     const end = _getFieldEnd(fieldMaps[i], fy);
     if (end) return end;
@@ -587,7 +596,7 @@ function _buildIncomeStatement(facts, sector, filings, verification) {
     { isShares: true }
   );
 
-  const years = _selectYearsFromFieldMaps([maps.revenue, maps.netIncome, maps.operatingIncome, maps.weightedAverageShsOutDil, sharesFallbackMap]);
+  const years = _selectYearsFromFieldMaps([maps.revenue, maps.netIncome, maps.operatingIncome, maps.epsDiluted, maps.weightedAverageShsOutDil]);
   const rows = years.map((fy) => {
     const rev = _getFieldValue(maps.revenue, fy);
     const cor = _getFieldValue(maps.costOfRevenue, fy);
@@ -619,7 +628,7 @@ function _buildIncomeStatement(facts, sector, filings, verification) {
     }
     const row = {
       year: String(fy),
-      date: _pickDate([maps.revenue, maps.netIncome, maps.operatingIncome], fy),
+      date: _pickDate([maps.revenue, maps.netIncome, maps.operatingIncome], fy, filings),
       calendarYear: String(fy),
       revenue: rev,
       costOfRevenue: _getFieldValue(maps.costOfRevenue, fy),
@@ -674,7 +683,7 @@ function _buildBalanceSheet(facts, filings, incomeMaps, verification) {
 
   const rows = years.map((fy) => {
     const assets = _getFieldValue(maps.totalAssets, fy);
-    const liabilities = _getFieldValue(maps.totalLiabilities, fy);
+    let liabilities = _getFieldValue(maps.totalLiabilities, fy);
     let equity = _getFieldValue(maps.totalStockholdersEquity, fy);
     if (equity == null && assets != null && liabilities != null) {
       equity = assets - liabilities;
@@ -685,6 +694,16 @@ function _buildBalanceSheet(facts, filings, incomeMaps, verification) {
         confidence: 'medium',
       });
       maps.totalStockholdersEquity.meta[fy].warnings.push('Derived totalStockholdersEquity from assets - liabilities');
+    }
+    if (liabilities == null && assets != null && equity != null) {
+      liabilities = assets - equity;
+      const baseMeta = maps.totalAssets.meta[fy] || maps.totalStockholdersEquity.meta[fy];
+      maps.totalLiabilities.meta[fy] = _cloneMeta(baseMeta, {
+        tagUsed: 'derived:totalLiabilities',
+        sourceType: 'derived',
+        confidence: 'medium',
+      });
+      maps.totalLiabilities.meta[fy].warnings.push('Derived totalLiabilities from assets - totalStockholdersEquity');
     }
 
     let bvps = _getFieldValue(maps.bookValuePerShareDirect, fy);
@@ -704,7 +723,7 @@ function _buildBalanceSheet(facts, filings, incomeMaps, verification) {
 
     const row = {
       year: String(fy),
-      date: _pickDate([maps.totalAssets, maps.totalStockholdersEquity, maps.totalLiabilities], fy),
+      date: _pickDate([maps.totalAssets, maps.totalStockholdersEquity, maps.totalLiabilities], fy, filings),
       calendarYear: String(fy),
       cashAndCashEquivalents: _getFieldValue(maps.cashAndCashEquivalents, fy),
       totalCurrentAssets: _getFieldValue(maps.totalCurrentAssets, fy),
@@ -756,7 +775,7 @@ function _buildCashFlow(facts, filings, verification) {
     const fcf = (opCF != null && capex != null) ? opCF - Math.abs(capex) : null;
     const row = {
       year: String(fy),
-      date: _pickDate([maps.operatingCashFlow, maps.capitalExpenditure, maps.netCashProvidedByUsedInInvestingActivities], fy),
+      date: _pickDate([maps.operatingCashFlow, maps.capitalExpenditure, maps.netCashProvidedByUsedInInvestingActivities], fy, filings),
       calendarYear: String(fy),
       operatingCashFlow: opCF,
       capitalExpenditure: capex,
@@ -903,9 +922,14 @@ async function _tryEdgar(ticker) {
   }
 
   await _supplementWithFmp(ticker, incomeRows, balanceRows, cashRows, verification);
+  _annotateUnresolvedFinancialFields(facts, incomeRows, balanceRows, verification);
 
   if (!_statementHasData(cashRows, ['capitalExpenditure'])) {
-    _pushWarning(verification.warnings, 'Capital expenditure unavailable from annual companyfacts');
+    if (sector === 'financial') {
+      _pushWarning(verification.warnings, 'Capital expenditure unavailable from annual companyfacts for this financial-sector issuer; freeCashFlow not derived without reliable CapEx');
+    } else {
+      _pushWarning(verification.warnings, 'Capital expenditure unavailable from annual companyfacts');
+    }
   }
 
   return {
@@ -1019,10 +1043,24 @@ function _rowYear(row) {
   return String((row && (row.year || row.calendarYear)) || '');
 }
 
+function _rowDate(row) {
+  return String((row && row.date) || '');
+}
+
+function _rowYearFromDate(row) {
+  return _rowDate(row).slice(0, 4);
+}
+
+function _valueLooksPlausible(field, value) {
+  const num = _sanitizeNumber(value);
+  if (num == null) return false;
+  if (field === 'weightedAverageShsOutDil' || field === 'longTermDebt') return num >= 0;
+  return true;
+}
+
 function _needsFmpSupplement(incomeRows, balanceRows, cashRows) {
   return incomeRows.some((row) => row.epsDiluted == null || row.weightedAverageShsOutDil == null)
-    || balanceRows.some((row) => row.longTermDebt == null || row.totalLiabilities == null || row.bookValuePerShare == null)
-    || cashRows.some((row) => row.capitalExpenditure == null || row.freeCashFlow == null);
+    || balanceRows.some((row) => row.longTermDebt == null || row.bookValuePerShare == null);
 }
 
 function _mergeSupplementSection(baseRows, supplementRows, section, fields, verification) {
@@ -1033,13 +1071,12 @@ function _mergeSupplementSection(baseRows, supplementRows, section, fields, veri
     const fy = _rowYear(row);
     const supplement = supplementByYear.get(fy);
     if (!supplement) continue;
+    if (_rowYearFromDate(supplement) && _rowYearFromDate(supplement) !== fy) continue;
     for (let j = 0; j < fields.length; j++) {
       const field = fields[j];
       if (row[field] != null || supplement[field] == null) continue;
-      const value = field === 'capitalExpenditure'
-        ? -Math.abs(Number(supplement[field]))
-        : _sanitizeNumber(supplement[field]);
-      if (value == null) continue;
+      const value = _sanitizeNumber(supplement[field]);
+      if (!_valueLooksPlausible(field, value)) continue;
       row[field] = value;
       _setVerificationField(verification, section, Number(fy), field, _makeSupplementMeta(fy, field, 'FMP'));
       changed++;
@@ -1086,14 +1123,90 @@ async function _supplementWithFmp(ticker, incomeRows, balanceRows, cashRows, ver
 
   let changed = 0;
   changed += _mergeSupplementSection(incomeRows, fmpPayload.incomeStatement, 'incomeStatement', ['epsDiluted', 'weightedAverageShsOutDil'], verification);
-  changed += _mergeSupplementSection(balanceRows, fmpPayload.balanceSheet, 'balanceSheet', ['longTermDebt', 'totalLiabilities', 'bookValuePerShare'], verification);
-  changed += _mergeSupplementSection(cashRows, fmpPayload.cashFlow, 'cashFlow', ['capitalExpenditure', 'freeCashFlow'], verification);
+  changed += _mergeSupplementSection(balanceRows, fmpPayload.balanceSheet, 'balanceSheet', ['longTermDebt', 'bookValuePerShare'], verification);
   changed += _deriveSupplementedBookValuePerShare(incomeRows, balanceRows, verification);
 
   if (changed > 0) {
     _pushWarning(verification.warnings, 'Supplemented missing annual fields from FMP where SEC EDGAR companyfacts was blank');
   }
   return changed > 0;
+}
+
+function _hasAnnualFactInUnits(facts, tags, allowedUnits, disallowedUnits) {
+  const allowed = new Set((allowedUnits || []).map(_normalizeUnit));
+  const disallowed = new Set((disallowedUnits || []).map(_normalizeUnit));
+  for (let taxonomyIndex = 0; taxonomyIndex < _TAXONOMIES.length; taxonomyIndex++) {
+    const taxonomy = _TAXONOMIES[taxonomyIndex];
+    for (let tagIndex = 0; tagIndex < tags.length; tagIndex++) {
+      const tag = tags[tagIndex];
+      const tagData = facts && facts.facts && facts.facts[taxonomy] && facts.facts[taxonomy][tag];
+      if (!tagData || !tagData.units) continue;
+      for (const unit of Object.keys(tagData.units)) {
+        const normalizedUnit = _normalizeUnit(unit);
+        if (allowed.size && !allowed.has(normalizedUnit)) continue;
+        if (disallowed.size && !disallowed.has(normalizedUnit)) continue;
+        const entries = tagData.units[unit] || [];
+        for (let i = 0; i < entries.length; i++) {
+          if (_isAnnualFact(entries[i], 'instant')) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function _setUnresolvedFieldMeta(verification, section, fy, field, warning) {
+  if (verification.fields[section][fy] && verification.fields[section][fy][field]) return;
+  _setVerificationField(verification, section, fy, field, {
+    tagUsed: null,
+    sourceType: 'unavailable',
+    form: null,
+    accession: null,
+    filedDate: null,
+    fiscalYear: Number(fy),
+    confidence: 'low',
+    warnings: [warning],
+  });
+}
+
+function _annotateUnresolvedFinancialFields(facts, incomeRows, balanceRows, verification) {
+  if (incomeRows.some((row) => row.epsDiluted == null)) {
+    _pushWarning(verification.warnings, 'No usable annual diluted EPS fact found in companyfacts for some rows');
+    for (let i = 0; i < incomeRows.length; i++) {
+      if (incomeRows[i].epsDiluted == null) {
+        _setUnresolvedFieldMeta(verification, 'incomeStatement', Number(_rowYear(incomeRows[i])), 'epsDiluted', 'No usable annual diluted EPS fact found in companyfacts');
+      }
+    }
+  }
+  if (incomeRows.some((row) => row.weightedAverageShsOutDil == null)) {
+    _pushWarning(verification.warnings, 'No usable annual diluted share-count fact found in companyfacts for some rows');
+    for (let i = 0; i < incomeRows.length; i++) {
+      if (incomeRows[i].weightedAverageShsOutDil == null) {
+        _setUnresolvedFieldMeta(verification, 'incomeStatement', Number(_rowYear(incomeRows[i])), 'weightedAverageShsOutDil', 'No usable annual diluted share-count fact found');
+      }
+    }
+  }
+  if (balanceRows.some((row) => row.bookValuePerShare == null)) {
+    _pushWarning(verification.warnings, 'Book value per share not derived for some rows because share-count basis was unavailable');
+    for (let i = 0; i < balanceRows.length; i++) {
+      if (balanceRows[i].bookValuePerShare == null) {
+        _setUnresolvedFieldMeta(verification, 'balanceSheet', Number(_rowYear(balanceRows[i])), 'bookValuePerShare', 'Book value per share not derived because share-count basis was unavailable');
+      }
+    }
+  }
+  if (balanceRows.some((row) => row.longTermDebt == null)) {
+    const debtTags = FIELD_DEFS.balanceSheet.longTermDebt.tags;
+    const hasMixedCurrencyDebt = _hasAnnualFactInUnits(facts, debtTags, [], ['eur', 'gbp', 'jpy', 'cad', 'cny']);
+    const warning = hasMixedCurrencyDebt
+      ? 'Long-term debt unavailable because only mixed-currency or non-comparable annual facts were found'
+      : 'No usable annual long-term debt fact found in companyfacts';
+    _pushWarning(verification.warnings, warning);
+    for (let i = 0; i < balanceRows.length; i++) {
+      if (balanceRows[i].longTermDebt == null) {
+        _setUnresolvedFieldMeta(verification, 'balanceSheet', Number(_rowYear(balanceRows[i])), 'longTermDebt', warning);
+      }
+    }
+  }
 }
 
 async function _tryFmp(ticker) {
@@ -1168,6 +1281,7 @@ module.exports = async function handler(req, res) {
 };
 
 module.exports._test = {
+  _annotateUnresolvedFinancialFields,
   _buildAnnualFilings,
   _buildBalanceSheet,
   _buildCashFlow,
@@ -1175,6 +1289,7 @@ module.exports._test = {
   _detectSectorFromSubmissions,
   _edgarQualityOk,
   _deriveSupplementedBookValuePerShare,
+  _hasAnnualFactInUnits,
   _extractDuration: (facts, tags, opts) => _selectFieldMap(facts, { byFY: new Map(), byAccession: new Map() }, { mode: 'duration', tags, unit: opts && opts.isShares ? 'shares' : (opts && opts.isEps ? 'eps' : undefined), sourceType: 'test' }, 'general', opts),
   _extractInstant: (facts, tags, opts) => _selectFieldMap(facts, { byFY: new Map(), byAccession: new Map() }, { mode: 'instant', tags, unit: opts && opts.isShares ? 'shares' : undefined, sourceType: 'test' }, 'general', opts),
   _mergeSupplementSection,
