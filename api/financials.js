@@ -140,9 +140,9 @@ function _extractByTags(facts, tags, opts = {}) {
           if (isRevTag) dbgFormPass++;
 
           // ── 2. Period filter ─────────────────────────────────────────────
-          // Duration facts (start present) must be explicitly FY.
-          // Instant facts (no start) are balance-sheet point-in-time — allow.
-          if (entry.start != null && entry.fp !== 'FY') continue;
+          // Duration facts must be explicitly marked FY to avoid
+          // admitting quarterly/Q4 values into annual statement rows.
+          if (entry.fp !== 'FY') continue;
           if (isRevTag) dbgFpPass++;
 
           // ── 3. Fiscal year derivation ────────────────────────────────────
