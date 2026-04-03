@@ -2370,7 +2370,7 @@ async function loadFinancials(bodyId = 'fin-body') {
     clearTimeout(timer);
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Financials unavailable');
-    _finCache[ticker] = { incomeStatement: data.incomeStatement, balanceSheet: data.balanceSheet, cashFlow: data.cashFlow };
+    _finCache[ticker] = { incomeStatement: data.incomeStatement, balanceSheet: data.balanceSheet, cashFlow: data.cashFlow, source: data.source || 'SEC EDGAR' };
     _finActiveSub = 'is';
     _finChatHistory = [];
     _renderFinPanel(body, ticker, _finCache[ticker], 'is');
@@ -2419,7 +2419,7 @@ function _renderFinPanel(body, ticker, data, activeSub) {
     <div style="padding:16px 16px 0">
       <div class="fin-table-wrap" id="fin-stmt-body">${_renderFinStmt(activeSub, data)}</div>
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:10px;padding-bottom:4px">
-        Source: SEC EDGAR companyfacts · Annual filings · Most recent on left
+        Source: ${data.source || 'SEC EDGAR'} · Annual · Most recent on left
       </div>
     </div>
     <div class="fin-chat" id="fin-chat-wrap">
