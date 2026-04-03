@@ -13,6 +13,11 @@ const TIMEOUT          = 15000;
 
 const ANNUAL_FORMS = new Set(['10-K', '10-K/A', '20-F', '20-F/A', '40-F', '40-F/A']);
 
+// Non-amended forms are preferred over amendments when filed dates are equal
+function _formPriority(form) {
+  return (form === '10-K' || form === '20-F' || form === '40-F') ? 1 : 0;
+}
+
 // ── In-memory caches ──────────────────────────────────────────────────────────
 const _tickerIndex      = { data: null, time: 0 }; // SEC ticker index, 24h TTL
 const _submissionsCache = new Map();                // paddedCik -> { data, time }, 24h TTL
@@ -254,9 +259,19 @@ function _extractDuration(facts, tags, opts) {
           // 1. Annual form only
           if (!ANNUAL_FORMS.has(entry.form)) continue;
 
-          // 2. STRICT fp filter: duration facts must be fp='FY'
-          //    This is the core fix: rejects quarterly data sneaking into annual rows
-          if (entry.fp !== 'FY') continue;
+          // 2. Annual period filter for duration facts.
+          //    Accept fp='FY' explicitly.
+          //    Accept null/missing fp only when the period spans ~12 months —
+          //    some filers omit fp on duration facts in their 10-K XBRL context.
+          //    Reject everything else (Q1–Q4 or short/multi-year periods).
+          if (entry.fp === 'FY') {
+            // explicitly annual — accept
+          } else if (entry.fp == null && entry.start != null && entry.end != null) {
+            const days = (new Date(entry.end) - new Date(entry.start)) / 86400000;
+            if (days < 330 || days > 380) continue; // quarter or multi-year — reject
+          } else {
+            continue; // Q1–Q4 or unrecognised period
+          }
 
           // 3. Fiscal year derivation
           const fy = entry.fy != null
@@ -271,10 +286,13 @@ function _extractDuration(facts, tags, opts) {
             console.log('[EDGAR rev] PASS tag=' + tag + ' form=' + entry.form + ' fp=' + entry.fp + ' fy=' + fy + ' val=' + val + ' end=' + entry.end + ' filed=' + entry.filed);
           }
 
-          // 4. Dedup: latest filed wins for same fy/tag
+          // 4. Dedup: latest filed wins; on tie prefer non-amended (10-K over 10-K/A)
           const cur = tagMap[fy];
-          if (!cur || filed > (cur.filed || '')) {
-            tagMap[fy] = { val: val, filed: filed, end: entry.end || null };
+          const pri = _formPriority(entry.form);
+          if (!cur
+              || filed > (cur.filed || '')
+              || (filed === (cur.filed || '') && pri > (cur.pri || 0))) {
+            tagMap[fy] = { val: val, filed: filed, end: entry.end || null, pri: pri };
           }
         }
       }
@@ -346,10 +364,13 @@ function _extractInstant(facts, tags, opts) {
           const val   = Number(entry.val);
           const filed = entry.filed || entry.end || '';
 
-          // 4. Latest filed wins
+          // 4. Latest filed wins; on tie prefer non-amended (10-K over 10-K/A)
           const cur = tagMap[fy];
-          if (!cur || filed > (cur.filed || '')) {
-            tagMap[fy] = { val: val, filed: filed, end: entry.end || null };
+          const pri = _formPriority(entry.form);
+          if (!cur
+              || filed > (cur.filed || '')
+              || (filed === (cur.filed || '') && pri > (cur.pri || 0))) {
+            tagMap[fy] = { val: val, filed: filed, end: entry.end || null, pri: pri };
           }
         }
       }
@@ -418,7 +439,10 @@ function _buildIS(facts, sector, years) {
     const rev = _v(revenue, fy);
     const cor = _v(costOfRev, fy);
     let   gp  = _v(grossProfit, fy);
-    if (gp == null && rev != null && cor != null) gp = rev - cor;
+    // Only synthesize gross profit for sectors that explicitly define grossProfit tags.
+    // Financial issuers map costOfRevenue to interest expense, so rev - cor would produce
+    // misleading net-interest-income rather than a meaningful gross profit line.
+    if (gp == null && rev != null && cor != null && tags.grossProfit.length > 0) gp = rev - cor;
     return {
       date:         _date([revenue, netIncome], fy),
       calendarYear: String(fy),
@@ -506,14 +530,20 @@ function _buildCF(facts, years) {
 
 // ── EDGAR quality check ───────────────────────────────────────────────────────
 
-function _edgarQualityOk(incomeStatement) {
-  const IS_KEY_FIELDS = ['revenue', 'netIncome', 'operatingIncome'];
-  let filled = 0;
-  for (let fi = 0; fi < IS_KEY_FIELDS.length; fi++) {
-    const f = IS_KEY_FIELDS[fi];
-    if (incomeStatement.some(function(r) { return r[f] != null; })) filled++;
-  }
-  return filled >= 2;
+function _edgarQualityOk(is, bs, cf) {
+  // Pass if at least 2 of 3 statements carry meaningful data.
+  // This avoids discarding a good EDGAR result just because IS coverage is sparse
+  // (e.g., energy/financial companies with non-standard IS tag sets).
+  const isOk = is.some(function(r) {
+    return r.revenue != null || r.netIncome != null || r.operatingIncome != null;
+  });
+  const bsOk = bs.some(function(r) {
+    return r.totalAssets != null || r.totalStockholdersEquity != null;
+  });
+  const cfOk = cf.some(function(r) {
+    return r.operatingCashFlow != null;
+  });
+  return (isOk ? 1 : 0) + (bsOk ? 1 : 0) + (cfOk ? 1 : 0) >= 2;
 }
 
 // ── Companyfacts fetch ────────────────────────────────────────────────────────
@@ -568,7 +598,7 @@ async function _tryEdgar(ticker) {
 
   if (!incomeStatement.length && !balanceSheet.length && !cashFlow.length) return null;
 
-  if (!_edgarQualityOk(incomeStatement)) {
+  if (!_edgarQualityOk(incomeStatement, balanceSheet, cashFlow)) {
     console.log('[EDGAR ' + ticker + '] quality check failed — deferring to FMP');
     return null;
   }
@@ -741,4 +771,11 @@ module.exports = async function handler(req, res) {
   }
 
   return res.status(200).json(Object.assign({ ok: true, cached: false }, payload));
+};
+
+// Exported only for unit tests — not part of the public API
+module.exports._test = {
+  _extractDuration: _extractDuration,
+  _extractInstant:  _extractInstant,
+  _buildBS:         _buildBS,
 };
