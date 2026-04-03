@@ -142,7 +142,9 @@ function _extractByTags(facts, tags, opts = {}) {
           // ── 2. Period filter ─────────────────────────────────────────────
           // Duration facts must be explicitly marked FY to avoid
           // admitting quarterly/Q4 values into annual statement rows.
-          if (entry.fp !== 'FY') continue;
+          // Instant facts (balance-sheet snapshots, share counts) often have
+          // no fp and should still be eligible.
+          if (entry.start && entry.fp !== 'FY') continue;
           if (isRevTag) dbgFpPass++;
 
           // ── 3. Fiscal year derivation ────────────────────────────────────
@@ -430,7 +432,7 @@ async function _tryFmp(ticker) {
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 
-module.exports = async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -492,4 +494,7 @@ module.exports = async function handler(req, res) {
   }
 
   return res.status(200).json({ ok: true, cached: false, ...payload });
-};
+}
+
+module.exports = handler;
+module.exports._test = { _extractByTags };
