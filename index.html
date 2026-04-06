@@ -2370,7 +2370,7 @@ async function loadFinancials(bodyId = 'fin-body') {
     clearTimeout(timer);
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Financials unavailable');
-    _finCache[ticker] = { incomeStatement: data.incomeStatement, balanceSheet: data.balanceSheet, cashFlow: data.cashFlow, source: data.source || 'SEC EDGAR' };
+    _finCache[ticker] = { incomeStatement: data.incomeStatement, balanceSheet: data.balanceSheet, cashFlow: data.cashFlow, source: data.source || 'SEC EDGAR', verification: data.verification || null };
     _finActiveSub = 'is';
     _finChatHistory = [];
     _renderFinPanel(body, ticker, _finCache[ticker], 'is');
@@ -2393,6 +2393,59 @@ function _finSwitchTab(tab) {
   document.querySelectorAll('#fin-body .fin-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   const stmtEl = document.getElementById('fin-stmt-body');
   if (stmtEl) stmtEl.innerHTML = _renderFinStmt(tab, data);
+}
+
+// Returns a compact collapsible trust panel for the Financials tab.
+// Shows API warnings and any fields marked unavailable in verification.fields.
+// Returns '' when verification is absent or has nothing user-visible to report.
+function _renderFinVerification(verification) {
+  if (!verification) return '';
+  const warnings = Array.isArray(verification.warnings) ? verification.warnings.filter(Boolean) : [];
+
+  // Only surface fields explicitly marked unavailable — canonical/derived/supplemental
+  // are either fine or already described in the top-level warnings array.
+  const FIN_FIELD_LABELS = {
+    epsDiluted:               'EPS (Diluted)',
+    weightedAverageShsOutDil: 'Diluted Shares',
+    bookValuePerShare:        'Book Value/Share',
+    longTermDebt:             'Long-Term Debt',
+  };
+  const seenBlank = new Set();
+  const blankFields = [];
+  const flds = (verification && verification.fields) || {};
+  for (const section of Object.keys(flds)) {
+    for (const fy of Object.keys(flds[section] || {})) {
+      for (const field of Object.keys(flds[section][fy] || {})) {
+        if (!FIN_FIELD_LABELS[field]) continue;
+        const meta = flds[section][fy][field];
+        if (meta && meta.sourceType === 'unavailable' && !seenBlank.has(field)) {
+          seenBlank.add(field);
+          blankFields.push(FIN_FIELD_LABELS[field]);
+        }
+      }
+    }
+  }
+
+  if (!warnings.length && !blankFields.length) return '';
+
+  const warnHtml = warnings.map(w =>
+    `<div style="color:var(--amber)">⚠ ${_sanitizeText(w)}</div>`
+  ).join('');
+
+  const blankHtml = blankFields.length
+    ? `<div style="color:var(--muted2)">· Unavailable: ${blankFields.map(f => _sanitizeText(f)).join(', ')}</div>`
+    : '';
+
+  const summaryLabel = warnings.length
+    ? `DATA QUALITY · ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}`
+    : 'DATA QUALITY';
+
+  return `<details style="margin-top:6px">
+    <summary style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);cursor:pointer;letter-spacing:0.07em;user-select:none">${_sanitizeText(summaryLabel)}</summary>
+    <div style="margin-top:4px;padding:6px 8px;border:1px solid var(--border);border-radius:3px;background:var(--surface2);display:flex;flex-direction:column;gap:3px;font-family:'DM Mono',monospace;font-size:9px;line-height:1.6">
+      ${warnHtml}${blankHtml}
+    </div>
+  </details>`;
 }
 
 function _renderFinPanel(body, ticker, data, activeSub) {
@@ -2421,6 +2474,7 @@ function _renderFinPanel(body, ticker, data, activeSub) {
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:10px;padding-bottom:4px">
         Source: ${data.source || 'SEC EDGAR'} · Annual · Most recent on left
       </div>
+      ${_renderFinVerification(data.verification)}
     </div>
     <div class="fin-chat" id="fin-chat-wrap">
       <div class="fin-chat-label">Ask about ${_sanitizeText(ticker)}'s financials</div>
@@ -2669,27 +2723,68 @@ async function loadFilings(bodyId = 'fil-body') {
       body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">No SEC filings found for this ticker.</div>';
       return;
     }
+    const evidenceByAccession = new Map();
+    const exportRows = [];
+    (data.evidence || []).forEach((item) => {
+      const key = item.accession || 'unknown';
+      if (!evidenceByAccession.has(key)) evidenceByAccession.set(key, []);
+      evidenceByAccession.get(key).push(item);
+      exportRows.push({
+        fiscalYear: item.fiscalYear,
+        field: item.field,
+        canonicalValue: '',
+        filingEvidenceValue: item.extractedValue,
+        chosenValue: '',
+        source: item.sourceType,
+        accession: item.accession,
+        filedDate: item.filedDate,
+        confidence: item.confidence,
+        warning: (item.warnings || []).join(' | ')
+      });
+    });
+    window._lastFilingEvidenceExportRows = exportRows;
     // Stamp filings freshness (fetched live from SEC EDGAR)
     window._lastFilingsMeta = { timestamp: new Date().toISOString(), cached: false, stale: false, servedStaleAfterError: false };
     const filSub = document.getElementById('fil-panel-sub');
     if (filSub) filSub.innerHTML = currentQuery.toUpperCase() + '&nbsp;&nbsp;' + renderFreshnessIndicator(window._lastFilingsMeta);
-    const badgeClass = (form) => ({'10-K':'tenk','10-Q':'tenq','20-F':'twentyf','6-K':'sixk'}[form] || 'eightk');
+    const badgeClass = (form) => ({'10-K':'tenk','10-K/A':'tenk','20-F':'twentyf','20-F/A':'twentyf','40-F':'twentyf','40-F/A':'twentyf'}[form] || 'eightk');
     const edgarBrowseUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${data.cik}&type=&dateb=&owner=include&count=40`;
     body.innerHTML = `
       <div class="val-section">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
           <div class="val-section-title" style="margin-bottom:0">${data.companyName} — SEC Filings</div>
-          <a href="${edgarBrowseUrl}" target="_blank" rel="noopener" class="filing-link" style="font-size:10px;padding:4px 10px">All EDGAR Filings ↗</a>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="filing-link" style="font-size:10px;padding:4px 10px;background:transparent" onclick="exportFilingsEvidence()">Export Evidence CSV</button>
+            <a href="${edgarBrowseUrl}" target="_blank" rel="noopener" class="filing-link" style="font-size:10px;padding:4px 10px">All EDGAR Filings ↗</a>
+          </div>
         </div>
-        ${data.isForeignFiler ? `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--gold);background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:4px;padding:6px 10px;margin-bottom:12px">Foreign Private Issuer — files 20-F (annual report) and 6-K (current reports) with SEC EDGAR</div>` : ''}
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2);margin-bottom:12px">Annual filings are listed below with filing-linked evidence for unresolved Financials fields when available.</div>
         ${data.filings.map(f => `
           <div class="filing-item">
             <span class="filing-badge ${badgeClass(f.form)}">${f.form}</span>
             <div class="filing-info">
-              <div class="filing-desc">${f.description || f.form}</div>
-              <div class="filing-date">${f.date}</div>
+              <div class="filing-desc">${f.form} filed ${f.filedDate || 'N/A'}${f.reportDate ? ` · period end ${f.reportDate}` : ''}</div>
+              <div class="filing-date">Accession ${f.accessionNumber || 'N/A'}</div>
+              ${(evidenceByAccession.get(f.accessionNumber || '') || []).length ? `
+                <div style="margin-top:8px;display:grid;gap:6px">
+                  ${(evidenceByAccession.get(f.accessionNumber || '') || []).map(item => `
+                    <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 8px;background:rgba(255,255,255,0.02)">
+                      <div><span style="color:var(--gold)">${item.field}</span> = ${item.extractedValue != null ? item.extractedValue : 'N/A'} <span style="color:var(--muted2)">(${item.confidence})</span></div>
+                      <div style="color:var(--muted2);margin-top:2px">${item.matchedLabel || item.reportName || 'Filing evidence'}${item.snippet ? ` · ${item.snippet}` : ''}</div>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : `<div style="margin-top:6px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2)">No targeted unresolved-field evidence extracted from this filing.</div>`}
+              ${f.documents?.length ? `
+                <div style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2)">
+                  ${f.documents.slice(0,4).map(doc => `<a href="${doc.url}" target="_blank" rel="noopener" class="filing-link" style="margin-right:8px">${doc.name}</a>`).join('')}
+                </div>
+              ` : ''}
             </div>
-            <a class="filing-link" href="${f.url}" target="_blank" rel="noopener">View ↗</a>
+            <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+              ${f.primaryDocumentPath ? `<a class="filing-link" href="${f.primaryDocumentPath}" target="_blank" rel="noopener">Primary ↗</a>` : ''}
+              ${f.filingIndexUrl ? `<a class="filing-link" href="${f.filingIndexUrl}" target="_blank" rel="noopener">Index ↗</a>` : ''}
+            </div>
           </div>`).join('')}
       </div>`;
   } catch(e) {
@@ -2702,6 +2797,30 @@ async function loadFilings(bodyId = 'fil-body') {
          target="_blank" style="color:var(--gold)">Search SEC EDGAR directly ↗</a>
     </div>`;
   }
+}
+
+async function exportFilingsEvidence() {
+  if (!Array.isArray(window._lastFilingEvidenceExportRows) || !window._lastFilingEvidenceExportRows.length) return;
+  const res = await fetch('https://djai.vercel.app/api/filings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'export',
+      ticker: currentQuery.toUpperCase(),
+      rows: window._lastFilingEvidenceExportRows
+    })
+  });
+  const data = await res.json();
+  if (!data.success || !data.content) return;
+  const blob = new Blob([data.content], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = data.filename || `${currentQuery.toLowerCase()}-filing-evidence.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function reconcileValuationLogic(vd) {
