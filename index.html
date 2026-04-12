@@ -374,17 +374,17 @@ body::before {
 .news-link-icon { font-size: 9px; color: var(--muted); margin-left: 4px; }
 
 /* FILINGS */
-.filing-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
-.filing-item:last-child { border-bottom: none; }
-.filing-badge { font-family: 'DM Mono', monospace; font-size: 9px; padding: 3px 7px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; flex-shrink: 0; }
+.filings-table { width:100%; border-collapse:collapse; }
+.filings-table th { font-family:'DM Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); text-align:left; padding:0 10px 10px 0; }
+.filings-table td { padding:12px 10px 12px 0; border-top:1px solid var(--border); font-size:12px; color:var(--muted2); vertical-align:middle; }
+.filings-table tbody tr:hover { background:rgba(255,255,255,0.02); }
+.filings-table td:last-child, .filings-table th:last-child { padding-right:0; text-align:right; }
+.filing-badge { font-family: 'DM Mono', monospace; font-size: 9px; padding: 3px 7px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; display:inline-block; }
 .filing-badge.tenk { background: rgba(201,168,76,0.15); color: var(--gold); }
-.filing-badge.tenq { background: rgba(91,143,212,0.15); color: var(--blue); }
-.filing-badge.eightk { background: rgba(76,175,125,0.15); color: var(--green); }
+.filing-badge.tenq { background: rgba(76,184,168,0.15); color: var(--teal); }
+.filing-badge.eightk { background: rgba(255,255,255,0.08); color: var(--text); }
 .filing-badge.twentyf { background: rgba(201,168,76,0.15); color: var(--gold); }
 .filing-badge.sixk { background: rgba(91,143,212,0.15); color: var(--blue); }
-.filing-info { flex: 1; }
-.filing-desc { font-size: 12px; color: var(--text); }
-.filing-date { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 2px; }
 .filing-link { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--gold); text-decoration: none; padding: 4px 10px; border: 1px solid rgba(201,168,76,0.3); border-radius: 5px; }
 .filing-link:hover { background: var(--gold3); }
 
@@ -2719,80 +2719,57 @@ async function loadFilings(bodyId = 'fil-body') {
     });
     clearTimeout(filTimer);
     const data = await res.json();
-    if (!data.success || !data.filings?.length) {
+    if (!data.ok || !data.filings?.length) {
       body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">No SEC filings found for this ticker.</div>';
       return;
     }
-    const accKey = (value) => String(value || '').replace(/-/g, '');
-    const evidenceByAccession = new Map();
-    const exportRows = [];
-    (data.evidence || []).forEach((item) => {
-      const key = accKey(item.accession) || 'unknown';
-      if (!evidenceByAccession.has(key)) evidenceByAccession.set(key, []);
-      evidenceByAccession.get(key).push(item);
-      exportRows.push({
-        fiscalYear: item.fiscalYear,
-        field: item.field,
-        canonicalValue: '',
-        filingEvidenceValue: item.extractedValue,
-        chosenValue: '',
-        source: item.sourceType,
-        accession: item.accession,
-        filedDate: item.filedDate,
-        confidence: item.confidence,
-        warning: (item.warnings || []).join(' | ')
-      });
-    });
-    window._lastFilingEvidenceExportRows = exportRows;
-    const filings = (data.filings || []).filter(f => ['10-K','10-K/A','20-F','20-F/A','40-F','40-F/A'].includes(f.form));
-    const filingsWithEvidence = filings.filter(f => (evidenceByAccession.get(accKey(f.accessionNumber)) || []).length > 0);
-    const renderEvidenceOnly = filingsWithEvidence.length > 0;
-    const rowsToRender = renderEvidenceOnly ? filingsWithEvidence : filings;
+    window._lastFilingEvidenceExportRows = [];
+    const filings = data.filings || [];
+    const fmtDate = (value) => {
+      const ts = Date.parse(value || '');
+      if (!Number.isFinite(ts)) return 'N/A';
+      return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
     // Stamp filings freshness (fetched live from SEC EDGAR)
     window._lastFilingsMeta = { timestamp: new Date().toISOString(), cached: false, stale: false, servedStaleAfterError: false };
     const filSub = document.getElementById('fil-panel-sub');
     if (filSub) filSub.innerHTML = currentQuery.toUpperCase() + '&nbsp;&nbsp;' + renderFreshnessIndicator(window._lastFilingsMeta);
-    const badgeClass = (form) => ({'10-K':'tenk','10-K/A':'tenk','20-F':'twentyf','20-F/A':'twentyf','40-F':'twentyf','40-F/A':'twentyf'}[form] || 'eightk');
-    const edgarBrowseUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${data.cik}&type=&dateb=&owner=include&count=40`;
+    const badgeClass = (form) => ({'10-K':'tenk','10-K/A':'tenk','20-F':'twentyf','20-F/A':'twentyf','10-Q':'tenq','8-K':'eightk'}[form] || 'eightk');
+    const edgarBrowseUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${data.cik}&type=10-K&dateb=&owner=include&count=40`;
     body.innerHTML = `
       <div class="val-section">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <div class="val-section-title" style="margin-bottom:0">${data.companyName} — SEC Filings</div>
+          <div class="val-section-title" style="margin-bottom:0">${_sanitizeText(data.entity || currentQuery.toUpperCase())} — SEC Filings</div>
           <div style="display:flex;gap:8px;align-items:center">
-            ${exportRows.length ? `<button class="filing-link" style="font-size:10px;padding:4px 10px;background:transparent" onclick="exportFilingsEvidence()">Export Evidence CSV</button>` : ''}
             <a href="${edgarBrowseUrl}" target="_blank" rel="noopener" class="filing-link" style="font-size:10px;padding:4px 10px">All EDGAR Filings ↗</a>
           </div>
         </div>
-        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2);margin-bottom:12px">${renderEvidenceOnly
-          ? 'Annual filings with targeted unresolved-field evidence are listed below.'
-          : 'Recent annual filings are listed below. No targeted unresolved-field evidence was extracted for this ticker.'}</div>
-        ${rowsToRender.map(f => `
-          <div class="filing-item">
-            <span class="filing-badge ${badgeClass(f.form)}">${f.form}</span>
-            <div class="filing-info">
-              <div class="filing-desc">${f.form} filed ${f.filedDate || f.filed || f.date || 'N/A'}${f.reportDate ? ` · period end ${f.reportDate}` : ''}</div>
-              <div class="filing-date">Accession ${f.accessionNumber || 'N/A'}</div>
-              ${(evidenceByAccession.get(accKey(f.accessionNumber)) || []).length ? `
-                <div style="margin-top:8px;display:grid;gap:6px">
-                  ${(evidenceByAccession.get(accKey(f.accessionNumber)) || []).map(item => `
-                    <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 8px;background:rgba(255,255,255,0.02)">
-                      <div><span style="color:var(--gold)">${item.field}</span> = ${item.extractedValue != null ? item.extractedValue : 'N/A'} <span style="color:var(--muted2)">(${item.confidence})</span></div>
-                      <div style="color:var(--muted2);margin-top:2px">${item.matchedLabel || item.reportName || 'Filing evidence'}${item.snippet ? ` · ${item.snippet}` : ''}</div>
-                    </div>
-                  `).join('')}
-                </div>
-              ` : ''}
-              ${f.documents?.length ? `
-                <div style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2)">
-                  ${f.documents.slice(0,4).map(doc => `<a href="${doc.url}" target="_blank" rel="noopener" class="filing-link" style="margin-right:8px">${doc.name}</a>`).join('')}
-                </div>
-              ` : ''}
-            </div>
-            <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-              ${f.primaryDocumentPath ? `<a class="filing-link" href="${f.primaryDocumentPath}" target="_blank" rel="noopener">Primary ↗</a>` : ''}
-              ${f.filingIndexUrl ? `<a class="filing-link" href="${f.filingIndexUrl}" target="_blank" rel="noopener">Index ↗</a>` : ''}
-            </div>
-          </div>`).join('')}
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:12px">Source: SEC EDGAR Submissions · Annual filings</div>
+        <table class="filings-table">
+          <thead>
+            <tr>
+              <th>Form</th>
+              <th>Filed Date</th>
+              <th>Period End</th>
+              <th>Description</th>
+              <th>View Filing</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filings.map(f => `
+              <tr>
+                <td><span class="filing-badge ${badgeClass(f.form)}">${_sanitizeText(f.form)}</span></td>
+                <td>${_sanitizeText(fmtDate(f.filedDate))}</td>
+                <td>${_sanitizeText(fmtDate(f.periodEnd))}</td>
+                <td>
+                  <div style="color:var(--text)">${_sanitizeText(f.description || 'Annual Report')}</div>
+                  <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:3px">${_sanitizeText(f.accessionNumber || '')}</div>
+                </td>
+                <td>${f.primaryUrl ? `<a href="${f.primaryUrl}" target="_blank" rel="noopener" class="filing-link">View Filing ↗</a>` : '<span style="color:var(--muted)">N/A</span>'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
       </div>`;
   } catch(e) {
     clearTimeout(filTimer);

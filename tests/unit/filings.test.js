@@ -37,17 +37,18 @@ test('_buildAnnualFilings keeps annual forms only and maps filedDate', () => {
     },
   }, '0000123456');
 
-  assert.deepStrictEqual(filings.map((f) => f.form), ['10-K', '20-F/A', '40-F']);
+  assert.deepStrictEqual(filings.map((f) => f.form), ['10-K', '20-F/A']);
   assert.strictEqual(filings[0].filedDate, '2025-01-31');
   assert.strictEqual(filings[0].accessionNumber, '00001234-25-000001');
   assert.strictEqual(
-    filings[0].primaryDocumentPath,
+    filings[0].primaryUrl,
     'https://www.sec.gov/Archives/edgar/data/123456/0000123425000001/a10k.htm'
   );
   assert.strictEqual(
-    filings[0].filingIndexUrl,
-    'https://www.sec.gov/Archives/edgar/data/123456/0000123425000001/index.json'
+    filings[0].indexUrl,
+    'https://www.sec.gov/Archives/edgar/data/123456/0000123425000001/00001234-25-000001-index.htm'
   );
+  assert.strictEqual(filings[0].periodEnd, '2024-12-31');
 });
 
 test('_buildCsv preserves evidence export columns', () => {
@@ -65,6 +66,10 @@ test('_buildCsv preserves evidence export columns', () => {
   }]);
   assert.ok(csv.includes('ticker,fiscalYear,field,canonicalValue,filingEvidenceValue,chosenValue,source,accession,filedDate,confidence,warning'));
   assert.ok(csv.includes('BRK.B,2025,weightedAverageShsOutDil,,2157335139,2157335139,filing_evidence,0001193125-26-083899,2026-03-02,medium,'));
+});
+
+test('_normalizeAccession removes dashes for SEC archive paths', () => {
+  assert.strictEqual(_test._normalizeAccession('0001018724-26-000004'), '000101872426000004');
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
