@@ -1,141 +1,207 @@
-// SEC EDGAR filings API — no key required, completely free
-module.exports = async function handler(req, res) {
+const USER_AGENT = 'DJAI Finance dev@djai.app';
+const TICKER_INDEX_URL = 'https://www.sec.gov/files/company_tickers.json';
+const ANNUAL_FORMS = new Set(['10-K', '10-K/A', '20-F', '20-F/A', '40-F', '40-F/A']);
+
+function _normalizeTicker(ticker) {
+  return String(ticker || '').trim().toUpperCase().replace(/[.\-]/g, '');
+}
+
+function _normalizeAccession(accession) {
+  return String(accession || '').replace(/-/g, '').trim();
+}
+
+function _safeDateValue(value) {
+  const ts = Date.parse(value || '');
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function _escapeCsv(value) {
+  const text = value == null ? '' : String(value);
+  if (!/[",\n]/.test(text)) return text;
+  return '"' + text.replace(/"/g, '""') + '"';
+}
+
+function _buildCsv(ticker, rows) {
+  const headers = [
+    'ticker',
+    'fiscalYear',
+    'field',
+    'canonicalValue',
+    'filingEvidenceValue',
+    'chosenValue',
+    'source',
+    'accession',
+    'filedDate',
+    'confidence',
+    'warning',
+  ];
+  const lines = [headers.join(',')];
+  for (const row of rows || []) {
+    const values = [
+      ticker || '',
+      row.fiscalYear,
+      row.field,
+      row.canonicalValue,
+      row.filingEvidenceValue,
+      row.chosenValue,
+      row.source,
+      row.accession,
+      row.filedDate,
+      row.confidence,
+      row.warning,
+    ].map(_escapeCsv);
+    lines.push(values.join(','));
+  }
+  return lines.join('\n');
+}
+
+async function _secFetchJson(url) {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': USER_AGENT,
+      'Accept': 'application/json',
+    },
+  });
+  if (!res.ok) throw new Error('SEC HTTP ' + res.status);
+  return res.json();
+}
+
+async function _resolveTicker(ticker) {
+  const raw = await _secFetchJson(TICKER_INDEX_URL);
+  const normalized = _normalizeTicker(ticker);
+  for (const entry of Object.values(raw || {})) {
+    if (_normalizeTicker(entry.ticker) !== normalized) continue;
+    return {
+      cik: String(entry.cik_str || entry.cik).padStart(10, '0'),
+      companyName: entry.title || entry.ticker,
+      ticker: entry.ticker,
+    };
+  }
+  return null;
+}
+
+function _archiveBase(cik, accession) {
+  const normalizedAccession = _normalizeAccession(accession);
+  if (!normalizedAccession) return null;
+  return `https://www.sec.gov/Archives/edgar/data/${parseInt(cik, 10)}/${normalizedAccession}`;
+}
+
+function _buildAnnualFilings(submissions, cik) {
+  const recent = submissions && submissions.filings && submissions.filings.recent ? submissions.filings.recent : {};
+  const forms = recent.form || [];
+  const filingDates = recent.filingDate || [];
+  const reportDates = recent.reportDate || [];
+  const accessions = recent.accessionNumber || [];
+  const primaryDocs = recent.primaryDocument || [];
+  const descriptions = recent.primaryDocDescription || [];
+  const out = [];
+
+  for (let i = 0; i < forms.length; i++) {
+    const form = forms[i];
+    if (!ANNUAL_FORMS.has(form)) continue;
+    const accessionNumber = accessions[i] || null;
+    const filedDate = filingDates[i] || null;
+    const reportDate = reportDates[i] || null;
+    const primaryDocument = primaryDocs[i] || null;
+    const base = _archiveBase(cik, accessionNumber);
+    out.push({
+      form,
+      accessionNumber,
+      accession: _normalizeAccession(accessionNumber),
+      filedDate,
+      filed: filedDate,
+      date: filedDate,
+      reportDate,
+      description: descriptions[i] || form,
+      primaryDocumentPath: (base && primaryDocument) ? `${base}/${primaryDocument}` : null,
+      filingIndexUrl: base ? `${base}/index.json` : null,
+      documents: [],
+    });
+  }
+
+  out.sort((a, b) => {
+    const filedDiff = _safeDateValue(b.filedDate) - _safeDateValue(a.filedDate);
+    if (filedDiff !== 0) return filedDiff;
+    return _safeDateValue(b.reportDate) - _safeDateValue(a.reportDate);
+  });
+
+  return out.slice(0, 8);
+}
+
+async function _attachDocuments(filings) {
+  return Promise.all((filings || []).map(async (filing) => {
+    if (!filing || !filing.filingIndexUrl) return filing;
+    try {
+      const json = await _secFetchJson(filing.filingIndexUrl);
+      const items = Array.isArray(json && json.directory && json.directory.item) ? json.directory.item : [];
+      const base = filing.filingIndexUrl.replace(/\/index\.json$/i, '');
+      filing.documents = items
+        .filter((item) => item && item.name && item.type !== 'dir')
+        .slice(0, 8)
+        .map((item) => ({
+          name: item.name,
+          type: item.type || '',
+          size: item.size || null,
+          url: `${base}/${item.name}`,
+        }));
+    } catch (_) {
+      filing.documents = [];
+    }
+    return filing;
+  }));
+}
+
+async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   let body = req.body;
-  if (typeof body === 'string') { try { body = JSON.parse(body); } catch(e) {} }
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch (_) {}
+  }
 
-  const { ticker } = body || {};
-  if (!ticker) return res.status(400).json({ error: 'No ticker provided' });
+  const action = body && body.action;
+  if (action === 'export') {
+    const ticker = String((body && body.ticker) || '').trim().toUpperCase();
+    const rows = Array.isArray(body && body.rows) ? body.rows : [];
+    return res.status(200).json({
+      success: true,
+      filename: `${(ticker || 'filings').toLowerCase()}-filing-evidence.csv`,
+      content: _buildCsv(ticker, rows),
+    });
+  }
+
+  const ticker = body && body.ticker;
+  if (!ticker) return res.status(400).json({ success: false, error: 'No ticker provided' });
 
   try {
-    // Step 1: Get CIK number from ticker
-    const tickerMapRes = await fetch(
-      'https://www.sec.gov/files/company_tickers.json',
-      { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' } }
-    );
-    const tickerMap = await tickerMapRes.json();
-
-    // Find CIK for ticker
-    let cik = null;
-    let companyName = null;
-    for (const key of Object.keys(tickerMap)) {
-      if (tickerMap[key].ticker === ticker.toUpperCase()) {
-        cik = String(tickerMap[key].cik_str).padStart(10, '0');
-        companyName = tickerMap[key].title;
-        break;
-      }
+    const resolved = await _resolveTicker(ticker);
+    if (!resolved) {
+      return res.status(404).json({ success: false, error: `No SEC filing found for ${ticker}` });
     }
 
-    if (!cik) return res.status(404).json({ error: `No SEC filing found for ${ticker}` });
-
-    // Step 2: Get recent filings
-    const filingsRes = await fetch(
-      `https://data.sec.gov/submissions/CIK${cik}.json`,
-      { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' } }
-    );
-    const filingsData = await filingsRes.json();
-
-    const recent = filingsData.filings?.recent || {};
-    const forms = recent.form || [];
-    const dates = recent.filingDate || [];
-    const accNums = recent.accessionNumber || [];
-    const primaryDocs = recent.primaryDocument || [];
-    const descriptions = recent.primaryDocDescription || [];
-
-    // Extract domestic (10-K, 10-Q, 8-K) and foreign private issuer (20-F, 6-K) filings
-    const filings = [];
-    for (let i = 0; i < forms.length && filings.length < 20; i++) {
-      const form = forms[i];
-      if (['10-K', '10-Q', '8-K', '20-F', '6-K'].includes(form)) {
-        const accNum = accNums[i].replace(/-/g, '');
-        const primaryDoc = primaryDocs[i];
-        const viewerUrl = `https://www.sec.gov/Archives/edgar/data/${parseInt(cik)}/${accNum}/${primaryDoc}`;
-        const edgarUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=${form}&dateb=&owner=include&count=10`;
-        filings.push({
-          form,
-          date: dates[i],
-          accessionNumber: accNums[i],
-          description: descriptions[i] || form,
-          url: viewerUrl,
-          edgarUrl
-        });
-      }
-    }
-
-    // Step 3: Get financial facts (income statement, balance sheet, cash flow)
-    const factsRes = await fetch(
-      `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`,
-      { headers: { 'User-Agent': 'DJAI Finance dev@djai.app' } }
-    );
-    const factsData = await factsRes.json();
-    // US GAAP filers use 'us-gaap'; foreign private issuers (IFRS) use 'ifrs-full'
-    const facts = factsData?.facts?.['us-gaap'] || factsData?.facts?.['ifrs-full'] || {};
-    const isForeignFiler = filings.some(f => f.form === '20-F');
-    // Annual report form type varies: 10-K for domestic, 20-F for foreign issuers
-    const annualFormTypes = ['10-K', '20-F'];
-
-    // Extract key financial metrics from XBRL data
-    const getLatestAnnual = (concept) => {
-      const data = facts[concept]?.units?.USD;
-      if (!data) return null;
-      const annual = data.filter(d => annualFormTypes.includes(d.form) && d.val != null)
-        .sort((a, b) => new Date(b.end) - new Date(a.end));
-      return annual.slice(0, 4).map(d => ({ value: d.val, period: d.end, filed: d.filed }));
-    };
-
-    // IFRS-full uses different concept names than US-GAAP for many metrics.
-    // Each line tries US-GAAP name first, then IFRS-full equivalent as fallback.
-    const financials = {
-      // Income Statement
-      revenue: getLatestAnnual('Revenues')
-        || getLatestAnnual('RevenueFromContractWithCustomerExcludingAssessedTax')
-        || getLatestAnnual('SalesRevenueNet')
-        || getLatestAnnual('Revenue'),                                    // ifrs-full
-      grossProfit: getLatestAnnual('GrossProfit'),                        // same in both
-      operatingIncome: getLatestAnnual('OperatingIncomeLoss')
-        || getLatestAnnual('ProfitLossFromOperatingActivities'),          // ifrs-full
-      netIncome: getLatestAnnual('NetIncomeLoss')
-        || getLatestAnnual('ProfitLoss'),                                 // ifrs-full
-      ebitda: getLatestAnnual('OperatingIncomeLoss')
-        || getLatestAnnual('ProfitLossFromOperatingActivities'),          // approximation
-      eps: getLatestAnnual('EarningsPerShareBasic')
-        || getLatestAnnual('BasicEarningsLossPerShare'),                  // ifrs-full
-      eps_diluted: getLatestAnnual('EarningsPerShareDiluted')
-        || getLatestAnnual('DilutedEarningsLossPerShare'),                // ifrs-full
-      // Balance Sheet
-      totalAssets: getLatestAnnual('Assets'),                            // same in both
-      totalLiabilities: getLatestAnnual('Liabilities'),                  // same in both
-      stockholderEquity: getLatestAnnual('StockholdersEquity')
-        || getLatestAnnual('Equity'),                                     // ifrs-full
-      cashAndEquivalents: getLatestAnnual('CashAndCashEquivalentsAtCarryingValue')
-        || getLatestAnnual('CashAndCashEquivalents'),                     // ifrs-full
-      longTermDebt: getLatestAnnual('LongTermDebt')
-        || getLatestAnnual('NoncurrentLiabilities')
-        || getLatestAnnual('LongtermBorrowings'),                         // ifrs-full
-      // Cash Flow
-      operatingCashflow: getLatestAnnual('NetCashProvidedByUsedInOperatingActivities')
-        || getLatestAnnual('CashFlowsFromUsedInOperatingActivities'),     // ifrs-full
-      capex: getLatestAnnual('PaymentsToAcquirePropertyPlantAndEquipment')
-        || getLatestAnnual('PurchaseOfPropertyPlantAndEquipment'),        // ifrs-full
-      dividendsPaid: getLatestAnnual('PaymentsOfDividends')
-        || getLatestAnnual('DividendsPaid'),                              // ifrs-full
-    };
+    const submissions = await _secFetchJson(`https://data.sec.gov/submissions/CIK${resolved.cik}.json`);
+    const annualFilings = await _attachDocuments(_buildAnnualFilings(submissions, resolved.cik));
 
     return res.status(200).json({
       success: true,
-      ticker: ticker.toUpperCase(),
-      cik,
-      companyName,
-      isForeignFiler,
-      filings,
-      financials
+      ticker: resolved.ticker || String(ticker).toUpperCase(),
+      cik: resolved.cik,
+      companyName: resolved.companyName,
+      filings: annualFilings,
+      evidence: [],
+      financials: {},
     });
-
-  } catch(e) {
-    return res.status(500).json({ error: e.message, success: false });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
   }
 }
+
+module.exports = handler;
+module.exports._test = {
+  _normalizeTicker,
+  _buildAnnualFilings,
+  _buildCsv,
+};

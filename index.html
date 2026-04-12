@@ -2723,10 +2723,11 @@ async function loadFilings(bodyId = 'fil-body') {
       body.innerHTML = '<div style="padding:24px;color:var(--muted2);font-size:12px">No SEC filings found for this ticker.</div>';
       return;
     }
+    const accKey = (value) => String(value || '').replace(/-/g, '');
     const evidenceByAccession = new Map();
     const exportRows = [];
     (data.evidence || []).forEach((item) => {
-      const key = item.accession || 'unknown';
+      const key = accKey(item.accession) || 'unknown';
       if (!evidenceByAccession.has(key)) evidenceByAccession.set(key, []);
       evidenceByAccession.get(key).push(item);
       exportRows.push({
@@ -2743,6 +2744,10 @@ async function loadFilings(bodyId = 'fil-body') {
       });
     });
     window._lastFilingEvidenceExportRows = exportRows;
+    const filings = (data.filings || []).filter(f => ['10-K','10-K/A','20-F','20-F/A','40-F','40-F/A'].includes(f.form));
+    const filingsWithEvidence = filings.filter(f => (evidenceByAccession.get(accKey(f.accessionNumber)) || []).length > 0);
+    const renderEvidenceOnly = filingsWithEvidence.length > 0;
+    const rowsToRender = renderEvidenceOnly ? filingsWithEvidence : filings;
     // Stamp filings freshness (fetched live from SEC EDGAR)
     window._lastFilingsMeta = { timestamp: new Date().toISOString(), cached: false, stale: false, servedStaleAfterError: false };
     const filSub = document.getElementById('fil-panel-sub');
@@ -2754,27 +2759,29 @@ async function loadFilings(bodyId = 'fil-body') {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
           <div class="val-section-title" style="margin-bottom:0">${data.companyName} — SEC Filings</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <button class="filing-link" style="font-size:10px;padding:4px 10px;background:transparent" onclick="exportFilingsEvidence()">Export Evidence CSV</button>
+            ${exportRows.length ? `<button class="filing-link" style="font-size:10px;padding:4px 10px;background:transparent" onclick="exportFilingsEvidence()">Export Evidence CSV</button>` : ''}
             <a href="${edgarBrowseUrl}" target="_blank" rel="noopener" class="filing-link" style="font-size:10px;padding:4px 10px">All EDGAR Filings ↗</a>
           </div>
         </div>
-        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2);margin-bottom:12px">Annual filings are listed below with filing-linked evidence for unresolved Financials fields when available.</div>
-        ${data.filings.map(f => `
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2);margin-bottom:12px">${renderEvidenceOnly
+          ? 'Annual filings with targeted unresolved-field evidence are listed below.'
+          : 'Recent annual filings are listed below. No targeted unresolved-field evidence was extracted for this ticker.'}</div>
+        ${rowsToRender.map(f => `
           <div class="filing-item">
             <span class="filing-badge ${badgeClass(f.form)}">${f.form}</span>
             <div class="filing-info">
-              <div class="filing-desc">${f.form} filed ${f.filedDate || 'N/A'}${f.reportDate ? ` · period end ${f.reportDate}` : ''}</div>
+              <div class="filing-desc">${f.form} filed ${f.filedDate || f.filed || f.date || 'N/A'}${f.reportDate ? ` · period end ${f.reportDate}` : ''}</div>
               <div class="filing-date">Accession ${f.accessionNumber || 'N/A'}</div>
-              ${(evidenceByAccession.get(f.accessionNumber || '') || []).length ? `
+              ${(evidenceByAccession.get(accKey(f.accessionNumber)) || []).length ? `
                 <div style="margin-top:8px;display:grid;gap:6px">
-                  ${(evidenceByAccession.get(f.accessionNumber || '') || []).map(item => `
+                  ${(evidenceByAccession.get(accKey(f.accessionNumber)) || []).map(item => `
                     <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 8px;background:rgba(255,255,255,0.02)">
                       <div><span style="color:var(--gold)">${item.field}</span> = ${item.extractedValue != null ? item.extractedValue : 'N/A'} <span style="color:var(--muted2)">(${item.confidence})</span></div>
                       <div style="color:var(--muted2);margin-top:2px">${item.matchedLabel || item.reportName || 'Filing evidence'}${item.snippet ? ` · ${item.snippet}` : ''}</div>
                     </div>
                   `).join('')}
                 </div>
-              ` : `<div style="margin-top:6px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2)">No targeted unresolved-field evidence extracted from this filing.</div>`}
+              ` : ''}
               ${f.documents?.length ? `
                 <div style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2)">
                   ${f.documents.slice(0,4).map(doc => `<a href="${doc.url}" target="_blank" rel="noopener" class="filing-link" style="margin-right:8px">${doc.name}</a>`).join('')}
