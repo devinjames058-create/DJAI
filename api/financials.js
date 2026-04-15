@@ -428,7 +428,7 @@ function _isAnnualFact(entry, mode) {
   if (entry.fp === 'FY') return true;
   if (entry.fp != null) return false;
   const days = _durationDays(entry);
-  return days != null && days >= 330 && days <= 380;
+  return days != null && days >= 300 && days <= 400;
 }
 
 function _deriveFiscalYear(entry) {
@@ -912,9 +912,15 @@ async function _tryEdgar(ticker) {
   years = years.slice(0, 5);
 
   const yearSet = new Set(years.map(String));
-  const incomeRows = _stripInvalidNumbers(income.rows.filter((row) => yearSet.has(row.year)));
-  const balanceRows = _stripInvalidNumbers(balance.rows.filter((row) => yearSet.has(row.year)));
-  const cashRows = _stripInvalidNumbers(cashFlow.rows.filter((row) => yearSet.has(row.year)));
+  const incomeRows = _stripInvalidNumbers(income.rows.filter((row) => yearSet.has(row.year))).map((r) => Object.assign(r, { _source: 'EDGAR' }));
+  const balanceRows = _stripInvalidNumbers(balance.rows.filter((row) => yearSet.has(row.year))).map((r) => Object.assign(r, { _source: 'EDGAR' }));
+  const cashRows = _stripInvalidNumbers(cashFlow.rows.filter((row) => yearSet.has(row.year))).map((r) => Object.assign(r, { _source: 'EDGAR' }));
+
+  const edgarRevenueYears = incomeRows.filter((r) => r.revenue != null).length;
+  if (edgarRevenueYears < 2) {
+    _pushWarning(verification.warnings, 'EDGAR returned fewer than 2 years of revenue; falling back to FMP');
+    return null;
+  }
 
   if (!_edgarQualityOk(incomeRows, balanceRows, cashRows)) {
     _pushWarning(verification.warnings, 'EDGAR annual extraction did not meet minimum statement coverage');
@@ -946,6 +952,7 @@ async function _tryEdgar(ticker) {
 
 function _normFmpIS(arr) {
   return (Array.isArray(arr) ? arr : []).slice(0, 5).map((r) => ({
+    _source: 'FMP',
     year: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
     date: r.date != null ? r.date : null,
     calendarYear: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
@@ -964,6 +971,7 @@ function _normFmpIS(arr) {
 
 function _normFmpBS(arr) {
   return (Array.isArray(arr) ? arr : []).slice(0, 5).map((r) => ({
+    _source: 'FMP',
     year: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
     date: r.date != null ? r.date : null,
     calendarYear: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
@@ -980,6 +988,7 @@ function _normFmpBS(arr) {
 
 function _normFmpCF(arr) {
   return (Array.isArray(arr) ? arr : []).slice(0, 5).map((r) => ({
+    _source: 'FMP',
     year: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),
     date: r.date != null ? r.date : null,
     calendarYear: r.calendarYear != null ? String(r.calendarYear) : (r.date ? String(r.date).slice(0, 4) : null),

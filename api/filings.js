@@ -118,12 +118,13 @@ function _buildAnnualFilings(submissions, cik) {
     const accessionNoDashes = _normalizeAccession(accessionNumber);
     if (!accessionNumber || !accessionNoDashes) continue;
     const primaryDocument = primaryDocs[i] || '';
+    const isHtmlDoc = primaryDocument && /\.(htm|html)$/i.test(primaryDocument);
     filings.push({
       form,
       filedDate: filingDates[i] || null,
       periodEnd: reportDates[i] || null,
       description: _annualDescription(form, descriptions[i]),
-      primaryUrl: primaryDocument
+      primaryUrl: isHtmlDoc
         ? `https://www.sec.gov/Archives/edgar/data/${numericCik}/${accessionNoDashes}/${primaryDocument}`
         : null,
       indexUrl: `https://www.sec.gov/Archives/edgar/data/${numericCik}/${accessionNoDashes}/${accessionNumber}-index.htm`,

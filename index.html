@@ -383,7 +383,7 @@ body::before {
 .filing-badge.tenk { background: rgba(201,168,76,0.15); color: var(--gold); }
 .filing-badge.tenq { background: rgba(76,184,168,0.15); color: var(--teal); }
 .filing-badge.eightk { background: rgba(255,255,255,0.08); color: var(--text); }
-.filing-badge.twentyf { background: rgba(201,168,76,0.15); color: var(--gold); }
+.filing-badge.twentyf { background: rgba(13,115,119,0.15); color: var(--teal); }
 .filing-badge.sixk { background: rgba(91,143,212,0.15); color: var(--blue); }
 .filing-link { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--gold); text-decoration: none; padding: 4px 10px; border: 1px solid rgba(201,168,76,0.3); border-radius: 5px; }
 .filing-link:hover { background: var(--gold3); }
@@ -2756,18 +2756,19 @@ async function loadFilings(bodyId = 'fil-body') {
             </tr>
           </thead>
           <tbody>
-            ${filings.map(f => `
-              <tr>
+            ${filings.map(f => {
+              const safeUrl = f.primaryUrl ? _sanitizeText(f.primaryUrl) : '';
+              return `
+              <tr style="cursor:${f.primaryUrl ? 'pointer' : 'default'}" ${safeUrl ? `data-url="${safeUrl}" onclick="window.open(this.dataset.url,'_blank','noopener')"` : ''}>
                 <td><span class="filing-badge ${badgeClass(f.form)}">${_sanitizeText(f.form)}</span></td>
                 <td>${_sanitizeText(fmtDate(f.filedDate))}</td>
                 <td>${_sanitizeText(fmtDate(f.periodEnd))}</td>
                 <td>
                   <div style="color:var(--text)">${_sanitizeText(f.description || 'Annual Report')}</div>
-                  <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:3px">${_sanitizeText(f.accessionNumber || '')}</div>
                 </td>
-                <td>${f.primaryUrl ? `<a href="${f.primaryUrl}" target="_blank" rel="noopener" class="filing-link">View Filing ↗</a>` : '<span style="color:var(--muted)">N/A</span>'}</td>
-              </tr>
-            `).join('')}
+                <td>${f.primaryUrl ? `<a href="${safeUrl}" target="_blank" rel="noopener" class="filing-link" onclick="event.stopPropagation()">View Filing ↗</a>` : '<span style="color:var(--muted)">N/A</span>'}</td>
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
       </div>`;
