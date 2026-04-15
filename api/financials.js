@@ -1231,6 +1231,25 @@ async function _tryFmp(ticker) {
   });
 }
 
+function _latestRevenue(payload) {
+  return payload && Array.isArray(payload.incomeStatement) && payload.incomeStatement.length
+    ? _sanitizeNumber(payload.incomeStatement[0].revenue)
+    : null;
+}
+
+function _responseBody(payload, cached) {
+  const financials = Object.assign({
+    revenue: _latestRevenue(payload),
+  }, payload);
+
+  return Object.assign({
+    ok: true,
+    cached,
+    _source: String((payload && payload.source) || '').toLowerCase(),
+    financials,
+  }, payload);
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -1250,7 +1269,7 @@ module.exports = async function handler(req, res) {
   const cacheKey = 'v7_' + _normalizeTicker(ticker);
   const cached = _finCache.get(cacheKey);
   if (cached && (Date.now() - cached.time < FIN_TTL)) {
-    return res.status(200).json(Object.assign({ ok: true, cached: true }, cached.data));
+    return res.status(200).json(_responseBody(cached.data, true));
   }
 
   let payload = null;
@@ -1286,7 +1305,7 @@ module.exports = async function handler(req, res) {
     _finCache.set(cacheKey, { data: payload, time: Date.now() });
   }
 
-  return res.status(200).json(Object.assign({ ok: true, cached: false }, payload));
+  return res.status(200).json(_responseBody(payload, false));
 };
 
 module.exports._test = {
